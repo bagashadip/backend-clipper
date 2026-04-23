@@ -14,20 +14,6 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="AI Video Clipper", version="1.0.0")
 
-# Trust proxy headers from Cloudflare / load balancers so that
-# request.url.scheme is 'https' and request.client.host is the real IP.
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
-
-# Session middleware required by Authlib for OAuth state parameter
-app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, https_only=False)
-
-# Build allowed origins dynamically from config
-_allowed_origins = ["http://localhost:3000", "http://localhost:3001"]
-if settings.frontend_url and settings.frontend_url not in _allowed_origins:
-    _allowed_origins.append(settings.frontend_url)
-if settings.backend_public_url and settings.backend_public_url not in _allowed_origins:
-    _allowed_origins.append(settings.backend_public_url)
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -36,9 +22,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Session middleware required by Authlib for OAuth state parameter
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.secret_key,
+    same_site="lax",
+    https_only=True
+)
+
+# Trust proxy headers from Cloudflare / load balancers so that
+# request.url.scheme is 'https' and request.client.host is the real IP.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+# Build allowed origins dynamically from config
+_allowed_origins = ["http://localhost:3000", "http://localhost:3001"]
+if settings.frontend_url and settings.frontend_url not in _allowed_origins:
+    _allowed_origins.append(settings.frontend_url)
+if settings.backend_public_url and settings.backend_public_url not in _allowed_origins:
+    _allowed_origins.append(settings.backend_public_url)
+
 app.include_router(router)
 app.include_router(auth_router)
-
 
 @app.get("/health")
 def health_check():
