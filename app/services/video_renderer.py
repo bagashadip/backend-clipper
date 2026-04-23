@@ -30,10 +30,10 @@ else:
 def _cq_params(cq: int, preset: str) -> list[str]:
     """Return ffmpeg quality params for the active encoder.
 
-    NVENC uses ``-rc:v vbr -cq CQ``; x264 uses ``-crf CQ``.
+    NVENC uses ``-rc vbr -cq CQ``; x264 uses ``-crf CQ``.
     """
     if _GPU_AVAILABLE:
-        return ["-rc:v", "vbr", "-cq", str(cq)]
+        return ["-rc", "vbr", "-cq", str(cq)]
     return ["-crf", str(cq)]
 
 # Find a bold font that exists on the system

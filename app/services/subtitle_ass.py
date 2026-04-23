@@ -16,32 +16,17 @@ logger = logging.getLogger(__name__)
 
 
 def _probe_nvenc() -> bool:
-    """Return True if h264_nvenc encoder is available in the system FFmpeg."""
+    """Return True only if h264_nvenc can actually encode a test frame."""
     try:
         result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
-            capture_output=True, text=True, timeout=5,
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi", "-i", "color=black:s=64x64:d=1",
+                "-vframes", "1", "-c:v", "h264_nvenc", "-f", "null", "-",
+            ],
+            capture_output=True, text=True, timeout=15,
         )
-        return "h264_nvenc" in result.stdout
-    except Exception:
-        return False
-
-
-_GPU_AVAILABLE: bool = _probe_nvenc()
-if _GPU_AVAILABLE:
-    logger.info("subtitle_ass: GPU encoding available — using h264_nvenc")
-else:
-    logger.warning("subtitle_ass: h264_nvenc not found — falling back to libx264")
-
-
-def _probe_nvenc() -> bool:
-    """Return True if h264_nvenc encoder is available in the system FFmpeg."""
-    try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
-            capture_output=True, text=True, timeout=5,
-        )
-        return "h264_nvenc" in result.stdout
+        return result.returncode == 0
     except Exception:
         return False
 
