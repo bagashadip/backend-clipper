@@ -51,6 +51,12 @@ WORKDIR /app
 COPY --from=deps /usr/local/lib/python3.11 /usr/local/lib/python3.11
 COPY --from=deps /usr/local/bin /usr/local/bin
 
+# Pre-download Whisper model as root, then fix ownership so the clipper
+# user can read it at runtime (no network needed inside the container).
+ENV XDG_CACHE_HOME=/app/.cache
+RUN python3.11 -c "import whisper; whisper.load_model('base')" \
+    && chown -R clipper:clipper /app/.cache
+
 # Copy application code
 COPY --chown=clipper:clipper . .
 
