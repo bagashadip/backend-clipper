@@ -21,18 +21,21 @@ async def login(request: Request):
     redirect_uri = f"{base_url}/auth/callback"
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
-
 @router.get("/callback", name="auth_callback")
 async def auth_callback(request: Request, db: Session = Depends(get_db)):
     try:
         base_url = settings.backend_public_url.rstrip('/')
         redirect_uri = f"{base_url}/auth/callback"
         
-        # INI PERUBAHAN KRUSIALNYA
-        # Kita ambil token tanpa ngecek state session
+        # 1. AMBIL KODE BALIKAN DARI GOOGLE
+        code = request.query_params.get("code")
+        if not code:
+            raise HTTPException(status_code=400, detail="Google tidak mengirimkan code")
+
+        # 2. FETCH TOKEN MURNI PAKE KODE SAJA (BYPASS STATE)
         token = await oauth.google.fetch_access_token(
             redirect_uri=redirect_uri,
-            request=request
+            code=code
         )
     except Exception as e:
         import traceback
@@ -45,7 +48,6 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
 
     userinfo = token.get("userinfo")
     if not userinfo or not userinfo.get("email"):
-        # Coba ambil userinfo manual kalau di token nggak ada
         try:
             resp = await oauth.google.get('https://www.googleapis.com/oauth2/v3/userinfo', token=token)
             userinfo = resp.json()
