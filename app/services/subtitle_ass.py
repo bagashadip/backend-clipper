@@ -9,9 +9,48 @@ seen in Alex Hormozi's short-form content.
 """
 
 import os
+import subprocess
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _probe_nvenc() -> bool:
+    """Return True if h264_nvenc encoder is available in the system FFmpeg."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return "h264_nvenc" in result.stdout
+    except Exception:
+        return False
+
+
+_GPU_AVAILABLE: bool = _probe_nvenc()
+if _GPU_AVAILABLE:
+    logger.info("subtitle_ass: GPU encoding available — using h264_nvenc")
+else:
+    logger.warning("subtitle_ass: h264_nvenc not found — falling back to libx264")
+
+
+def _probe_nvenc() -> bool:
+    """Return True if h264_nvenc encoder is available in the system FFmpeg."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return "h264_nvenc" in result.stdout
+    except Exception:
+        return False
+
+
+_GPU_AVAILABLE: bool = _probe_nvenc()
+if _GPU_AVAILABLE:
+    logger.info("subtitle_ass: GPU encoding available — using h264_nvenc")
+else:
+    logger.warning("subtitle_ass: h264_nvenc not found — falling back to libx264")
 
 # ── ASS color helpers ─────────────────────────────────────────────────────
 # ASS uses BGR hex in the format &HBBGGRR& (alpha prefix &HAABBGGRR& optional)
@@ -345,29 +384,29 @@ def burn_ass_subtitles(
     input_video_path: str,
     ass_path: str,
     output_video_path: str,
-    crf: int = 18,
-    preset: str = "medium",
+    cq: int = 18,
+    preset: str = "p4",
     bitrate: str | None = None,
 ) -> str:
     """
     Burn an .ASS subtitle file into a video using FFmpeg's ``ass`` filter.
 
-    This is significantly faster than the frame-by-frame Pillow approach
-    because FFmpeg handles it natively in C via libass.
+    Uses ``h264_nvenc`` (GPU) when available, with automatic fallback to
+    ``libx264`` (CPU).  In GPU mode, CQ-based VBR is used; in CPU mode, CRF.
 
     Args:
         input_video_path: Source video (already cropped/resized).
         ass_path: Path to the .ASS file.
         output_video_path: Output destination.
-        crf: Constant Rate Factor (lower = better quality).
-        preset: x264 encoding preset.
-        bitrate: Optional max bitrate (e.g. ``"5M"``).
+        cq: Quality target — maps to ``-cq`` (NVENC) or ``-crf`` (x264).
+            Lower values = better quality.
+        preset: Encoder preset.  NVENC: ``p1``–``p7`` (p4 = balanced).
+            Ignored when GPU is unavailable (``medium`` is used instead).
+        bitrate: Optional max bitrate cap (e.g. ``"5M"``).
 
     Returns:
         Path to the output video.
     """
-    import subprocess
-
     # Escape special chars in the path for FFmpeg filter syntax
     # FFmpeg ass filter needs : \ ' escaped
     escaped_ass = ass_path.replace("\\", "\\\\\\\\")
@@ -376,24 +415,44 @@ def burn_ass_subtitles(
 
     vf = f"ass='{escaped_ass}'"
 
-    cmd = [
-        "ffmpeg",
-        "-i", input_video_path,
-        "-vf", vf,
-        "-c:v", "libx264",
-        "-crf", str(crf),
-        "-preset", preset,
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-movflags", "+faststart",
-    ]
-
-    if bitrate:
-        cmd.extend(["-maxrate", bitrate, "-bufsize", str(int(bitrate.rstrip("M")) * 2) + "M"])
+    if _GPU_AVAILABLE:
+        # NVENC: hardware-accelerated encoding with VBR + CQ quality target
+        cmd = [
+            "ffmpeg",
+            "-hwaccel", "cuda",
+            "-i", input_video_path,
+            "-vf", vf,
+            "-c:v", "h264_nvenc",
+            "-rc:v", "vbr",
+            "-cq", str(cq),
+            "-preset", preset,
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+        ]
+        if bitrate:
+            bufsize = str(int(bitrate.rstrip("M")) * 2) + "M"
+            cmd.extend(["-maxrate", bitrate, "-bufsize", bufsize])
+    else:
+        # CPU fallback: libx264 with CRF
+        cmd = [
+            "ffmpeg",
+            "-i", input_video_path,
+            "-vf", vf,
+            "-c:v", "libx264",
+            "-crf", str(cq),
+            "-preset", "medium",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+        ]
+        if bitrate:
+            bufsize = str(int(bitrate.rstrip("M")) * 2) + "M"
+            cmd.extend(["-maxrate", bitrate, "-bufsize", bufsize])
 
     cmd.extend(["-y", output_video_path])
 
-    logger.info(f"Burning ASS subtitles: {' '.join(cmd)}")
+    logger.info(f"Burning ASS subtitles ({'GPU' if _GPU_AVAILABLE else 'CPU'}): {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:

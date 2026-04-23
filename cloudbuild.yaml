@@ -1,0 +1,86 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# cloudbuild.yaml  —  GCP Cloud Build pipeline
+#
+# Builds the backend Docker image, pushes it to Artifact Registry, and
+# optionally deploys the Celery worker to GKE.
+#
+# Required Cloud Build substitution variables (set in trigger or --substitutions):
+#   _REGION         e.g. asia-southeast1
+#   _REPO           e.g. clipper-repo          (Artifact Registry repo name)
+#   _GKE_CLUSTER    e.g. clipper-cluster       (GKE cluster name)
+#   _GKE_NAMESPACE  e.g. clipper               (Kubernetes namespace)
+#
+# Image is tagged:
+#   ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}
+#   ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:latest
+# ─────────────────────────────────────────────────────────────────────────────
+
+substitutions:
+  _REGION: asia-southeast1
+  _REPO: clipper-repo
+  _GKE_CLUSTER: clipper-cluster
+  _GKE_NAMESPACE: clipper
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+steps:
+  # ── Step 1: Build the backend image ────────────────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    args:
+      - build
+      - --file=backend/Dockerfile
+      - --target=final
+      - --cache-from=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend:latest
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend:$SHORT_SHA
+      - --tag=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend:latest
+      - ./backend
+
+  # ── Step 2: Push both tags ──────────────────────────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    id: push-sha
+    waitFor: [build]
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend:$SHORT_SHA
+
+  - name: gcr.io/cloud-builders/docker
+    id: push-latest
+    waitFor: [build]
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend:latest
+
+  # ── Step 3: Deploy API to GKE (rolling update) ─────────────────────────────
+  - name: gcr.io/cloud-builders/kubectl
+    id: deploy-api
+    waitFor: [push-sha]
+    env:
+      - CLOUDSDK_COMPUTE_REGION=$_REGION
+      - CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER
+    args:
+      - set
+      - image
+      - deployment/clipper-api
+      - api=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend:$SHORT_SHA
+      - --namespace=$_GKE_NAMESPACE
+
+  # ── Step 4: Deploy Celery worker to GKE (GPU node pool) ────────────────────
+  - name: gcr.io/cloud-builders/kubectl
+    id: deploy-worker
+    waitFor: [push-sha]
+    env:
+      - CLOUDSDK_COMPUTE_REGION=$_REGION
+      - CLOUDSDK_CONTAINER_CLUSTER=$_GKE_CLUSTER
+    args:
+      - set
+      - image
+      - deployment/clipper-worker
+      - worker=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend:$SHORT_SHA
+      - --namespace=$_GKE_NAMESPACE
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/backend:latest

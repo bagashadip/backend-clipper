@@ -11,9 +11,30 @@ if not hasattr(Image, "ANTIALIAS"):
 
 from moviepy.editor import VideoFileClip, VideoClip, CompositeVideoClip
 from app.services.youtube import download_video_segment
-from app.services.subtitle_ass import generate_dynamic_ass, burn_ass_subtitles
+from app.services.subtitle_ass import generate_dynamic_ass, burn_ass_subtitles, _GPU_AVAILABLE
 
 logger = logging.getLogger(__name__)
+
+if _GPU_AVAILABLE:
+    logger.info("video_renderer: GPU encoding active — h264_nvenc")
+    _VCODEC = "h264_nvenc"
+    _PRESET_FAST = "p1"
+    _PRESET_BALANCED = "p4"
+else:
+    logger.warning("video_renderer: h264_nvenc unavailable — falling back to libx264")
+    _VCODEC = "libx264"
+    _PRESET_FAST = "ultrafast"
+    _PRESET_BALANCED = "medium"
+
+
+def _cq_params(cq: int, preset: str) -> list[str]:
+    """Return ffmpeg quality params for the active encoder.
+
+    NVENC uses ``-rc:v vbr -cq CQ``; x264 uses ``-crf CQ``.
+    """
+    if _GPU_AVAILABLE:
+        return ["-rc:v", "vbr", "-cq", str(cq)]
+    return ["-crf", str(cq)]
 
 # Find a bold font that exists on the system
 _FONT_PATHS = [
@@ -109,15 +130,15 @@ def generate_proxy_video(
 
         video.write_videofile(
             output_path,
-            codec="libx264",
+            codec=_VCODEC,
             audio_codec="aac",
             fps=24,
-            preset="ultrafast",
+            preset=_PRESET_FAST,
             threads=2,
             logger=None,
             temp_audiofile=os.path.join(output_dir, "temp-audio.m4a"),
             remove_temp=True,
-            ffmpeg_params=["-crf", "32", "-movflags", "+faststart"],
+            ffmpeg_params=_cq_params(32, _PRESET_FAST) + ["-movflags", "+faststart"],
         )
 
         video.close()
@@ -171,10 +192,12 @@ def generate_preview_from_clip(rendered_path: str) -> str:
     output_dir = tempfile.mkdtemp(prefix="clipper_preview_")
     output_path = os.path.join(output_dir, "preview.mp4")
 
+    gpu_input = ["-hwaccel", "cuda"] if _GPU_AVAILABLE else []
     cmd = [
-        "ffmpeg", "-i", rendered_path,
+        "ffmpeg", *gpu_input, "-i", rendered_path,
         "-vf", "scale='min(480,iw)':-2",
-        "-c:v", "libx264", "-crf", "32", "-preset", "ultrafast",
+        "-c:v", _VCODEC, "-preset", _PRESET_FAST,
+        *_cq_params(32, _PRESET_FAST),
         "-c:a", "aac", "-b:a", "64k",
         "-movflags", "+faststart",
         "-y", output_path,
@@ -270,16 +293,16 @@ def render_clip(
             logger.info(f"[{caption_style}] Pass 1: Exporting intermediate → {intermediate_path}")
             video.write_videofile(
                 intermediate_path,
-                codec="libx264",
+                codec=_VCODEC,
                 audio_codec="aac",
                 audio_bitrate="192k",
                 fps=30,
-                preset="ultrafast",
+                preset=_PRESET_FAST,
                 threads=2,
                 logger=None,
                 temp_audiofile=os.path.join(output_dir, "temp-audio.m4a"),
                 remove_temp=True,
-                ffmpeg_params=["-crf", "16", "-movflags", "+faststart"],
+                ffmpeg_params=_cq_params(16, _PRESET_FAST) + ["-movflags", "+faststart"],
             )
             video.close()
 
@@ -308,8 +331,8 @@ def render_clip(
                 input_video_path=intermediate_path,
                 ass_path=ass_path,
                 output_video_path=output_path,
-                crf=18,
-                preset="medium",
+                cq=18,
+                preset=_PRESET_BALANCED,
                 bitrate=vq["bitrate"],
             )
 
@@ -331,17 +354,17 @@ def render_clip(
             logger.info(f"Rendering clip to {output_path} at {quality}")
             video.write_videofile(
                 output_path,
-                codec="libx264",
+                codec=_VCODEC,
                 audio_codec="aac",
                 audio_bitrate="192k",
                 bitrate=vq["bitrate"],
                 fps=30,
-                preset="medium",
+                preset=_PRESET_BALANCED,
                 threads=2,
                 logger=None,
                 temp_audiofile=os.path.join(output_dir, "temp-audio.m4a"),
                 remove_temp=True,
-                ffmpeg_params=["-movflags", "+faststart", "-crf", "18"],
+                ffmpeg_params=["-movflags", "+faststart"] + _cq_params(18, _PRESET_BALANCED),
             )
             video.close()
 
@@ -352,17 +375,17 @@ def render_clip(
             logger.info(f"Rendering clip (no captions) to {output_path} at {quality}")
             video.write_videofile(
                 output_path,
-                codec="libx264",
+                codec=_VCODEC,
                 audio_codec="aac",
                 audio_bitrate="192k",
                 bitrate=vq["bitrate"],
                 fps=30,
-                preset="medium",
+                preset=_PRESET_BALANCED,
                 threads=2,
                 logger=None,
                 temp_audiofile=os.path.join(output_dir, "temp-audio.m4a"),
                 remove_temp=True,
-                ffmpeg_params=["-movflags", "+faststart", "-crf", "18"],
+                ffmpeg_params=["-movflags", "+faststart"] + _cq_params(18, _PRESET_BALANCED),
             )
             video.close()
 
