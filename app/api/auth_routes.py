@@ -24,9 +24,12 @@ async def login(request: Request):
 @router.get("/callback", name="auth_callback")
 async def auth_callback(request: Request, db: Session = Depends(get_db)):
     try:
-        token = await oauth.google.authorize_access_token(request)
-    except Exception:
-        raise HTTPException(status_code=401, detail="OAuth authentication failed")
+        # Pass redirect_uri explicitly so Authlib doesn't reconstruct it from
+        # request.url (which may be HTTP behind Cloudflare/proxy).
+        redirect_uri = f"{settings.backend_public_url}/auth/callback"
+        token = await oauth.google.authorize_access_token(request, redirect_uri=redirect_uri)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"OAuth authentication failed: {e}")
 
     userinfo = token.get("userinfo")
     if not userinfo or not userinfo.get("email"):
