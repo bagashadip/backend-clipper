@@ -1,7 +1,11 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from starlette.requests import Request
+
+# MATIKAN SIFAT REWEL AUTHLIB SOAL PROXY/HTTP
+os.environ["AUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 from app.config import get_settings
 from app.database import get_db
@@ -11,25 +15,31 @@ from app.services.auth import create_access_token, get_current_user, oauth
 settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
 @router.get("/login")
 async def login(request: Request):
-    # Build the callback URL from BACKEND_PUBLIC_URL so it is always the
-    # correct public-facing HTTPS URL regardless of how the request arrives
-    # (e.g. behind a reverse proxy / load balancer).
-    redirect_uri = f"{settings.backend_public_url}/auth/callback"
+    # Pake rstrip('/') biar gak ada tragedi double slash
+    base_url = settings.backend_public_url.rstrip('/')
+    redirect_uri = f"{base_url}/auth/callback"
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
 @router.get("/callback", name="auth_callback")
 async def auth_callback(request: Request, db: Session = Depends(get_db)):
     try:
-        # Pass redirect_uri explicitly so Authlib doesn't reconstruct it from
-        # request.url (which may be HTTP behind Cloudflare/proxy).
-        redirect_uri = f"{settings.backend_public_url}/auth/callback"
+        base_url = settings.backend_public_url.rstrip('/')
+        redirect_uri = f"{base_url}/auth/callback"
         token = await oauth.google.authorize_access_token(request, redirect_uri=redirect_uri)
     except Exception as e:
-        raise HTTPException(status_code=401, detail=f"OAuth authentication failed: {e}")
+        # LOGGING KE TERMINAL BIAR KETAHUAN PENYAKIT ASLINYA
+        import traceback
+        print("🔥" * 20)
+        print(f"ERROR TYPE: {type(e)}")
+        print(f"ERROR DETAILS: {repr(e)}")
+        traceback.print_exc()
+        print("🔥" * 20)
+        
+        # Lempar ke UI pake repr(e) biar nggak string kosong
+        raise HTTPException(status_code=401, detail=f"OAuth authentication failed: {repr(e)}")
 
     userinfo = token.get("userinfo")
     if not userinfo or not userinfo.get("email"):
@@ -47,7 +57,7 @@ async def auth_callback(request: Request, db: Session = Depends(get_db)):
 
     # Issue JWT and redirect to frontend with token
     access_token = create_access_token(str(user.id))
-    frontend_url = settings.frontend_url
+    frontend_url = settings.frontend_url.rstrip('/')
     return RedirectResponse(url=f"{frontend_url}?token={access_token}")
 
 
