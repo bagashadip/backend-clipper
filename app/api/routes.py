@@ -1,6 +1,7 @@
 import re
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -65,7 +66,7 @@ def process_url(
     db.commit()
     db.refresh(video)
 
-    process_video_task.delay(str(video.id))
+    process_video_task.delay(str(video.id), request.categories)
 
     return ProcessURLResponse(
         video_id=video.id,
@@ -128,7 +129,7 @@ def update_clip(
     if request.end_time is not None:
         clip.end_time = request.end_time
     if request.caption_style is not None:
-        if request.caption_style not in ("classic", "hormozi", "none"):
+        if request.caption_style not in ("classic", "hormozi", "hormozi_dynamic", "impact_pop", "typewriter", "none"):
             raise HTTPException(status_code=400, detail="Invalid caption style")
         clip.caption_style = request.caption_style
     if request.quality is not None:
@@ -345,6 +346,20 @@ def get_clip_preview_url(
         s3_key = f"clips/{clip.id}.mp4"
         presigned_url = generate_presigned_url(s3_key, expiration=3600)
         return {"url": presigned_url}
+
+
+@router.get("/clips/{clip_id}/thumbnail")
+def get_clip_thumbnail(clip_id: UUID, db: Session = Depends(get_db)):
+    """Redirect to a presigned S3 URL for the clip thumbnail."""
+    clip = db.query(Clip).filter(Clip.id == clip_id).first()
+    if not clip:
+        raise HTTPException(status_code=404, detail="Clip not found")
+    if not clip.thumbnail_url:
+        raise HTTPException(status_code=404, detail="No thumbnail available")
+
+    s3_key = f"clips/{clip.id}_thumb.jpg"
+    url = generate_presigned_url(s3_key, expiration=3600)
+    return RedirectResponse(url=url, status_code=307)
 
 
 @router.get("/quota")

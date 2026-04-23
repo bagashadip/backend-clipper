@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=30)
-def process_video_task(self, video_id: str):
+def process_video_task(self, video_id: str, categories: list[str] | None = None):
     db = SessionLocal()
     audio_path = None
 
@@ -53,6 +53,7 @@ def process_video_task(self, video_id: str):
             formatted_transcript,
             video_duration=video.duration_seconds or 0,
             user_tier=user_tier,
+            categories=categories,
         )
 
         # Step 4: Create clips and subtitles in DB

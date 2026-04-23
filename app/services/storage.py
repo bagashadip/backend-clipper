@@ -1,5 +1,6 @@
 import os
 import logging
+import mimetypes
 import boto3
 from botocore.config import Config
 from app.config import get_settings
@@ -36,12 +37,16 @@ def upload_to_s3(local_path: str, s3_key: str) -> str:
 
     logger.info(f"Uploading {local_path} to s3://{settings.aws_s3_bucket}/{s3_key}")
 
+    content_type, _ = mimetypes.guess_type(local_path)
+    if not content_type:
+        content_type = "application/octet-stream"
+
     client.upload_file(
         local_path,
         settings.aws_s3_bucket,
         s3_key,
         ExtraArgs={
-            "ContentType": "video/mp4",
+            "ContentType": content_type,
         },
     )
 

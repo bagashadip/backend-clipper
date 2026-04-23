@@ -1,5 +1,6 @@
 import os
 import logging
+import subprocess
 import tempfile
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -10,6 +11,7 @@ if not hasattr(Image, "ANTIALIAS"):
 
 from moviepy.editor import VideoFileClip, VideoClip, CompositeVideoClip
 from app.services.youtube import download_video_segment
+from app.services.subtitle_ass import generate_dynamic_ass, burn_ass_subtitles
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ def _find_font():
 
 _BOLD_FONT_PATH = _find_font()
 
-# Caption style presets
+# Caption style presets (used by OLD Pillow-based pipeline for "classic" and "hormozi")
 CAPTION_STYLES = {
     "classic": {
         "fontsize": 60,
@@ -43,6 +45,7 @@ CAPTION_STYLES = {
         "stroke_width": 4,
     },
     "none": None,
+    # "hormozi_dynamic" is handled by the ASS pipeline — no Pillow config needed
 }
 
 # Vertical (9:16) target resolutions and bitrates
@@ -58,6 +61,10 @@ LANDSCAPE_QUALITY = {
     "720p":  {"width": 1280, "height": 720,  "bitrate": "5M"},
     "1080p": {"width": 1920, "height": 1080, "bitrate": "10M"},
 }
+
+# Padding added to clip end_time so the cut feels natural
+# (speaker finishes breath / pitch drops before hard cut).
+CLIP_END_BUFFER = 0.8  # seconds
 
 # Source download quality needed to get enough pixels after 9:16 crop.
 # After cropping 16:9→9:16, crop_width = source_height * 9/16.
@@ -190,12 +197,24 @@ def render_clip(
     """
     Render a clip with burned-in captions.
 
+    CAPTION STYLE ROUTING:
+      - "classic" / "hormozi" → Legacy Pillow frame-by-frame text overlay
+      - "hormozi_dynamic"     → ASS subtitle pipeline (per-word karaoke highlighting)
+      - "none"                → No captions, single-pass export
+
+    Pipeline for ALL styles:
+      1. Download source segment
+      2. Crop & resize via MoviePy → intermediate video (no captions)
+      3a. (legacy)  Pillow _burn_captions() overlay during MoviePy export
+      3b. (dynamic) Generate .ASS → burn via FFmpeg libass
+      3c. (none)    Direct export
+
     Args:
         youtube_url: Source YouTube URL.
         start_time: Clip start in seconds.
         end_time: Clip end in seconds.
         word_timestamps: List of {"word": str, "start": float, "end": float}.
-        caption_style: "classic", "hormozi", or "none".
+        caption_style: "classic", "hormozi", "hormozi_dynamic", or "none".
         quality: "480p", "720p", or "1080p".
         export_format: "9:16" (portrait) or "16:9" (landscape).
         crop_x_percent: 0-100 crop horizontal position (portrait only).
@@ -205,24 +224,27 @@ def render_clip(
     """
     segment_path = None
     try:
-        # Download source — portrait needs higher res for crop
+        # ── Step 1: Download source segment ───────────────────────────────
         if export_format == "9:16":
             source_quality = SOURCE_QUALITY_FOR_VERTICAL.get(quality, quality)
         else:
-            source_quality = quality  # landscape doesn't need oversampling
+            source_quality = quality
 
-        logger.info(f"Downloading segment {start_time:.1f}s - {end_time:.1f}s "
-                    f"(source={source_quality}, format={export_format}, crop={crop_x_percent:.0f}%)")
-        segment_path = download_video_segment(youtube_url, start_time, end_time, quality=source_quality)
+        # Add buffer so the cut ends naturally (breath / pitch drop)
+        end_time_final = end_time + CLIP_END_BUFFER
+
+        logger.info(f"Downloading segment {start_time:.1f}s - {end_time_final:.1f}s "
+                    f"(source={source_quality}, format={export_format}, crop={crop_x_percent:.0f}%, "
+                    f"buffer={CLIP_END_BUFFER}s)")
+        segment_path = download_video_segment(youtube_url, start_time, end_time_final, quality=source_quality)
 
         video = VideoFileClip(segment_path)
 
-        # Crop & resize based on export format
+        # ── Step 2: Crop & resize ─────────────────────────────────────────
         if export_format == "9:16":
             video = _crop_to_vertical(video, crop_x_percent=crop_x_percent)
             vq = VERTICAL_QUALITY.get(quality, VERTICAL_QUALITY["480p"])
         else:
-            # 16:9 — no crop needed, just resize
             vq = LANDSCAPE_QUALITY.get(quality, LANDSCAPE_QUALITY["480p"])
 
         target_w, target_h = vq["width"], vq["height"]
@@ -231,43 +253,125 @@ def render_clip(
             logger.info(f"Resizing from {cur_w}x{cur_h} to {target_w}x{target_h}")
             video = video.resize((target_w, target_h))
 
-        # Apply face tracking placeholder
         video = _apply_face_tracking(video)
 
-        # Burn in captions
-        style_config = CAPTION_STYLES.get(caption_style)
-        if style_config:
-            video = _burn_captions(video, word_timestamps, start_time, style_config)
-
-        # Export
         output_dir = tempfile.mkdtemp(prefix="clipper_render_")
         output_path = os.path.join(output_dir, "output.mp4")
 
-        logger.info(f"Rendering clip to {output_path} at {quality}")
-        video.write_videofile(
-            output_path,
-            codec="libx264",
-            audio_codec="aac",
-            audio_bitrate="192k",
-            bitrate=vq["bitrate"],
-            fps=30,
-            preset="medium",
-            threads=2,
-            logger=None,
-            temp_audiofile=os.path.join(output_dir, "temp-audio.m4a"),
-            remove_temp=True,
-            ffmpeg_params=["-movflags", "+faststart", "-crf", "18"],
-        )
+        # ── Step 3: CAPTION STYLE ROUTING ─────────────────────────────────
 
-        video.close()
+        if caption_style in ("hormozi_dynamic", "impact_pop", "typewriter") and len(word_timestamps) > 0:
+            # ────────────────────────────────────────────────────────────
+            # ROUTE A: New ASS pipeline (per-word karaoke highlighting)
+            # ────────────────────────────────────────────────────────────
+            intermediate_path = os.path.join(output_dir, "intermediate.mp4")
+
+            # Pass 1: Export cropped/resized video without captions
+            logger.info(f"[{caption_style}] Pass 1: Exporting intermediate → {intermediate_path}")
+            video.write_videofile(
+                intermediate_path,
+                codec="libx264",
+                audio_codec="aac",
+                audio_bitrate="192k",
+                fps=30,
+                preset="ultrafast",
+                threads=2,
+                logger=None,
+                temp_audiofile=os.path.join(output_dir, "temp-audio.m4a"),
+                remove_temp=True,
+                ffmpeg_params=["-crf", "16", "-movflags", "+faststart"],
+            )
+            video.close()
+
+            # Shift word timestamps to clip-relative time
+            shifted_words = []
+            for w in word_timestamps:
+                shifted_words.append({
+                    "word": w["word"],
+                    "start": max(0, w["start"] - start_time),
+                    "end": max(0, w["end"] - start_time),
+                })
+
+            # Pass 2: Generate ASS and burn via FFmpeg
+            ass_path = os.path.join(output_dir, "subtitles.ass")
+            generate_dynamic_ass(
+                word_level_data=shifted_words,
+                output_ass_path=ass_path,
+                style_name=caption_style,
+                video_width=target_w,
+                video_height=target_h,
+                max_words_per_line=4,
+            )
+
+            logger.info(f"[{caption_style}] Pass 2: Burning ASS subtitles → {output_path}")
+            burn_ass_subtitles(
+                input_video_path=intermediate_path,
+                ass_path=ass_path,
+                output_video_path=output_path,
+                crf=18,
+                preset="medium",
+                bitrate=vq["bitrate"],
+            )
+
+            # Cleanup intermediate
+            try:
+                os.remove(intermediate_path)
+            except OSError:
+                pass
+
+        elif caption_style in ("classic", "hormozi") and len(word_timestamps) > 0:
+            # ────────────────────────────────────────────────────────────
+            # ROUTE B: Legacy Pillow frame-by-frame text overlay
+            # ────────────────────────────────────────────────────────────
+            style_config = CAPTION_STYLES.get(caption_style)
+            if style_config:
+                logger.info(f"[{caption_style}] Burning captions via Pillow pipeline")
+                video = _burn_captions(video, word_timestamps, start_time, style_config)
+
+            logger.info(f"Rendering clip to {output_path} at {quality}")
+            video.write_videofile(
+                output_path,
+                codec="libx264",
+                audio_codec="aac",
+                audio_bitrate="192k",
+                bitrate=vq["bitrate"],
+                fps=30,
+                preset="medium",
+                threads=2,
+                logger=None,
+                temp_audiofile=os.path.join(output_dir, "temp-audio.m4a"),
+                remove_temp=True,
+                ffmpeg_params=["-movflags", "+faststart", "-crf", "18"],
+            )
+            video.close()
+
+        else:
+            # ────────────────────────────────────────────────────────────
+            # ROUTE C: No captions ("none" or empty word_timestamps)
+            # ────────────────────────────────────────────────────────────
+            logger.info(f"Rendering clip (no captions) to {output_path} at {quality}")
+            video.write_videofile(
+                output_path,
+                codec="libx264",
+                audio_codec="aac",
+                audio_bitrate="192k",
+                bitrate=vq["bitrate"],
+                fps=30,
+                preset="medium",
+                threads=2,
+                logger=None,
+                temp_audiofile=os.path.join(output_dir, "temp-audio.m4a"),
+                remove_temp=True,
+                ffmpeg_params=["-movflags", "+faststart", "-crf", "18"],
+            )
+            video.close()
+
         return output_path
 
     finally:
-        # Cleanup downloaded segment
         if segment_path and os.path.exists(segment_path):
             try:
                 os.remove(segment_path)
-                # Remove parent temp dir
                 os.rmdir(os.path.dirname(segment_path))
             except OSError:
                 pass
