@@ -5,7 +5,7 @@ psycopg2-binary==2.9.9
 alembic==1.13.2
 celery[redis]==5.4.0
 redis==5.1.0
-yt-dlp==2024.8.6
+yt-dlp>=2024.04.09
 moviepy==1.0.3
 boto3==1.35.0
 python-dotenv==1.0.1
