@@ -17,8 +17,9 @@ def _get_base_opts() -> dict:
     opts = {
         "quiet": False,
         "no_warnings": True,
-        # TAMENG BARU: Nyamar jadi Smart TV atau Web Browser
-        "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
+        # ios/android clients expose full DASH format lists;
+        # tv is kept as last resort for age-gated content.
+        "extractor_args": {"youtube": {"player_client": ["ios", "android", "web", "tv"]}},
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
