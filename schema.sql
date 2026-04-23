@@ -6,6 +6,7 @@ CREATE TYPE subscription_tier AS ENUM ('free', 'pro', 'enterprise');
 CREATE TYPE video_status AS ENUM ('pending', 'downloading', 'transcribing', 'analyzing', 'rendering', 'completed', 'failed');
 CREATE TYPE clip_status AS ENUM ('pending', 'rendering', 'completed', 'failed');
 CREATE TYPE caption_style AS ENUM ('classic', 'hormozi', 'hormozi_dynamic', 'impact_pop', 'typewriter', 'none');
+CREATE TYPE clip_quality AS ENUM ('480p', '720p', '1080p');
 
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -33,12 +34,16 @@ CREATE TABLE clips (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     video_id UUID NOT NULL REFERENCES source_videos(id) ON DELETE CASCADE,
     storage_url TEXT,
+    thumbnail_url TEXT,
     title VARCHAR(500),
     start_time FLOAT NOT NULL,
     end_time FLOAT NOT NULL,
     virality_score INTEGER CHECK (virality_score >= 0 AND virality_score <= 100),
     reasoning TEXT,
     caption_style caption_style NOT NULL DEFAULT 'classic',
+    quality clip_quality NOT NULL DEFAULT '480p',
+    export_format VARCHAR(10) NOT NULL DEFAULT '9:16',
+    crop_x_percent FLOAT NOT NULL DEFAULT 50.0,
     status clip_status NOT NULL DEFAULT 'pending',
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
