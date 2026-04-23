@@ -97,11 +97,11 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     output_path = os.path.join(output_dir, "segment.mp4")
 
     QUALITY_FORMATS = {
-        "480p": "bv*[height<=480]+ba/b[height<=480]/bv*+ba/b",
-        "720p": "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b",
-        "1080p": "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
-        "1440p": "bv*[height<=1440]+ba/b[height<=1440]/bv*+ba/b",
-        "2160p": "bv*[height<=2160]+ba/b[height<=2160]/bv*+ba/b",
+        "480p":  "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best",
+        "720p":  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+        "1080p": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "1440p": "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best[height<=1440]/best",
+        "2160p": "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best",
     }
     fmt = QUALITY_FORMATS.get(quality, QUALITY_FORMATS["480p"])
 
