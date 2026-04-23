@@ -13,11 +13,17 @@ class Settings(BaseSettings):
     s3_endpoint_url: str = ""
 
     # Google OAuth
-    google_client_id: str = "774266853892-n6ep9i661fble252slbjhdspb8nnd7bf.apps.googleusercontent.com"
-    google_client_secret: str = "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"
-    
-    # JWT
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
+    # JWT — must be overridden in production via SECRET_KEY env var
     secret_key: str = "change-me-in-production"
+
+    # Public-facing URLs
+    # Set BACKEND_PUBLIC_URL to the HTTPS URL of the backend in production
+    # so Google OAuth redirect URIs are correct.
+    # e.g. https://api.example.com  or  https://34.177.101.239 (with SSL proxy)
+    backend_public_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

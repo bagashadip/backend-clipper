@@ -14,7 +14,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.get("/login")
 async def login(request: Request):
-    redirect_uri = str(request.url_for("auth_callback"))
+    # Build the callback URL from BACKEND_PUBLIC_URL so it is always the
+    # correct public-facing HTTPS URL regardless of how the request arrives
+    # (e.g. behind a reverse proxy / load balancer).
+    redirect_uri = f"{settings.backend_public_url}/auth/callback"
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
