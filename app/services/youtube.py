@@ -98,15 +98,41 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     output_dir = tempfile.mkdtemp(prefix="clipper_segment_")
     output_path = os.path.join(output_dir, "segment.mp4")
 
+    # Prefer H264 (avc1) video + M4A audio so output is always true H264/MP4.
+    # YouTube provides H264 up to 1080p; 1440p/2160p tiers fall through to VP9
+    # but the postprocessor will recode those to H264 anyway.
     QUALITY_FORMATS = {
-        "best":  "bestvideo+bestaudio/best",   # highest available, no height filter
-        "480p":  "best[height<=480]",
-        "720p":  "best[height<=720]",
-        "1080p": "bestvideo[height>=1080]+bestaudio/best",
-        "1440p": "bestvideo[height>=1440]+bestaudio/best",
-        "2160p": "bestvideo[height>=2160]+bestaudio/best",
+        # 9:16 source: grab the best H264 available, fall back to any adaptive
+        "best":  (
+            "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]"
+            "/bestvideo[vcodec^=avc1]+bestaudio"
+            "/bestvideo+bestaudio/best"
+        ),
+        "480p":  (
+            "bestvideo[height<=480][vcodec^=avc1]+bestaudio[ext=m4a]"
+            "/bestvideo[height<=480][vcodec^=avc1]+bestaudio"
+            "/bestvideo[height<=480]+bestaudio/best[height<=480]"
+        ),
+        "720p":  (
+            "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]"
+            "/bestvideo[height<=720][vcodec^=avc1]+bestaudio"
+            "/bestvideo[height<=720]+bestaudio/best[height<=720]"
+        ),
+        "1080p": (
+            "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]"
+            "/bestvideo[height<=1080][vcodec^=avc1]+bestaudio"
+            "/bestvideo[height<=1080]+bestaudio/best"
+        ),
+        "1440p": (
+            "bestvideo[height<=1440][vcodec^=avc1]+bestaudio[ext=m4a]"
+            "/bestvideo[height<=1440]+bestaudio/best"
+        ),
+        "2160p": (
+            "bestvideo[height<=2160][vcodec^=avc1]+bestaudio[ext=m4a]"
+            "/bestvideo[height<=2160]+bestaudio/best"
+        ),
     }
-    fmt = QUALITY_FORMATS.get(quality, QUALITY_FORMATS["480p"])
+    fmt = QUALITY_FORMATS.get(quality, QUALITY_FORMATS["best"])
 
     # Format time as HH:MM:SS
     start_str = _seconds_to_timestamp(start_time)
@@ -115,6 +141,8 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     ydl_opts = _get_base_opts()
     ydl_opts.update({
         "format": fmt,
+        # Prefer H264 > VP9 > AV1, and MP4/M4A containers
+        "format_sort": ["vcodec:h264", "acodec:m4a", "ext:mp4:m4a"],
         "outtmpl": output_path,
         "download_ranges": yt_dlp.utils.download_range_func(
             None, [(start_time, end_time)]
