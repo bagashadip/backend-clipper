@@ -17,10 +17,10 @@ def _get_base_opts() -> dict:
     opts = {
         "quiet": False,
         "no_warnings": True,
-        # ios is the most reliable client on datacenter/server IPs — it always
-        # exposes full DASH adaptive format lists regardless of IP reputation.
-        # android and web are fallbacks; tv handles age-gated content.
-        "extractor_args": {"youtube": {"player_client": ["ios", "android", "tv", "web"]}}
+        # android gives DASH adaptive streams (separate video+audio) on most IPs.
+        # ios returns HLS (muxed) streams — useful fallback but no DASH splitting.
+        # tv handles age-gated content; web as last resort.
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv", "web"]}}
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
@@ -103,38 +103,43 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     # Prefer H264 (avc1) video + M4A audio so output is always true H264/MP4.
     # YouTube provides H264 up to 1080p; 1440p/2160p tiers fall through to VP9
     # but the postprocessor will recode those to H264 anyway.
-    # Never fall back to `best` (muxed progressive) — YouTube caps those at 720p.
-    # Always stay on adaptive (bestvideo+bestaudio) chains to get real resolution.
-    # H264 (avc1) is preferred; VP9/AV1 are acceptable since video_renderer.py
-    # re-encodes to H264 anyway.
+    # Format priority: H264 adaptive > any adaptive > muxed progressive (last resort).
+    # /best at the end is intentional — better to get 720p muxed than to crash.
+    # android client gives DASH (bestvideo+bestaudio splits); ios gives HLS (muxed).
     QUALITY_FORMATS = {
         "best":  (
             "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[vcodec^=avc1]+bestaudio"
             "/bestvideo+bestaudio"
+            "/best"
         ),
         "480p":  (
             "bestvideo[height<=480][vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[height<=480][vcodec^=avc1]+bestaudio"
             "/bestvideo[height<=480]+bestaudio"
+            "/best[height<=480]/best"
         ),
         "720p":  (
             "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[height<=720][vcodec^=avc1]+bestaudio"
             "/bestvideo[height<=720]+bestaudio"
+            "/best[height<=720]/best"
         ),
         "1080p": (
             "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[height<=1080][vcodec^=avc1]+bestaudio"
             "/bestvideo[height<=1080]+bestaudio"
+            "/best"
         ),
         "1440p": (
             "bestvideo[height<=1440][vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[height<=1440]+bestaudio"
+            "/best"
         ),
         "2160p": (
             "bestvideo[height<=2160][vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[height<=2160]+bestaudio"
+            "/best"
         ),
     }
     fmt = QUALITY_FORMATS.get(quality, QUALITY_FORMATS["best"])
