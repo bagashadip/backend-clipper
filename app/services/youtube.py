@@ -65,8 +65,11 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
 
     ydl_opts = _get_base_opts()
     ydl_opts.update({
-        # "format": "140/bestaudio[ext=m4a]/bestaudio/best",
-        "format": "ba/b",
+        # bestaudio[ext=m4a]: prefer native m4a (no re-encode needed)
+        # bestaudio: any audio-only stream
+        # best: muxed stream as last resort — FFmpegExtractAudio will strip the video
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format_sort": ["+abr"],  # highest audio bitrate first
         "outtmpl": output_template + ".%(ext)s",
         "extract_flat": False,
         "postprocessors": [{
