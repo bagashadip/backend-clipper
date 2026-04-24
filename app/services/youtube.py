@@ -18,7 +18,7 @@ def _get_base_opts() -> dict:
         "quiet": False,
         "no_warnings": True,
         # ios/android expose full DASH format lists; tv for age-gated content
-        # "extractor_args": {"youtube": {"player_client": ["ios", "android", "web", "tv"]}},
+        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}}
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
@@ -39,8 +39,8 @@ def extract_metadata(youtube_url: str) -> dict:
     """Extract video metadata without downloading."""
     ydl_opts = _get_base_opts()
     ydl_opts["skip_download"] = True
-    # Don't restrict format — only need metadata, not a downloadable stream
-    ydl_opts["format"] = "bestvideo+bestaudio/best"
+    ydl_opts["ignore_no_formats_error"] = True
+    ydl_opts["format"] = "best"
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
