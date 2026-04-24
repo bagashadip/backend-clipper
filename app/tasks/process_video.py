@@ -174,7 +174,7 @@ def render_clip_task(self, clip_id: str):
         ]
 
         # Render the clip
-        output_path = render_clip(
+        output_path, effective_quality = render_clip(
             youtube_url=video.youtube_url,
             start_time=clip.start_time,
             end_time=clip.end_time,
@@ -189,6 +189,8 @@ def render_clip_task(self, clip_id: str):
         storage_url = upload_to_s3(output_path, f"clips/{clip.id}.mp4")
         clip.storage_url = storage_url
         clip.status = "completed"
+        # Save effective quality (may differ from requested if source lacked pixels)
+        clip.quality = effective_quality
         db.commit()
 
         # Generate lightweight preview for editor playback

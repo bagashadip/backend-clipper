@@ -216,34 +216,18 @@ def render_clip(
     quality: str = "480p",
     export_format: str = "9:16",
     crop_x_percent: float = 50.0,
-) -> str:
+) -> tuple[str, str]:
     """
     Render a clip with burned-in captions.
 
     CAPTION STYLE ROUTING:
-      - "classic" / "hormozi" → Legacy Pillow frame-by-frame text overlay
-      - "hormozi_dynamic"     → ASS subtitle pipeline (per-word karaoke highlighting)
-      - "none"                → No captions, single-pass export
-
-    Pipeline for ALL styles:
-      1. Download source segment
-      2. Crop & resize via MoviePy → intermediate video (no captions)
-      3a. (legacy)  Pillow _burn_captions() overlay during MoviePy export
-      3b. (dynamic) Generate .ASS → burn via FFmpeg libass
-      3c. (none)    Direct export
-
-    Args:
-        youtube_url: Source YouTube URL.
-        start_time: Clip start in seconds.
-        end_time: Clip end in seconds.
-        word_timestamps: List of {"word": str, "start": float, "end": float}.
-        caption_style: "classic", "hormozi", "hormozi_dynamic", or "none".
-        quality: "480p", "720p", or "1080p".
-        export_format: "9:16" (portrait) or "16:9" (landscape).
-        crop_x_percent: 0-100 crop horizontal position (portrait only).
+      - "classic" / "hormozi": Legacy Pillow frame-by-frame text overlay
+      - "hormozi_dynamic": ASS subtitle pipeline (per-word karaoke highlighting)
+      - "none": No captions, single-pass export
 
     Returns:
-        Path to the rendered MP4 file.
+        (output_path, effective_quality) -- effective_quality may differ from
+        `quality` if the source lacked enough pixels to avoid upscaling.
     """
     segment_path = None
     try:
@@ -266,6 +250,24 @@ def render_clip(
         # ── Step 2: Crop & resize ─────────────────────────────────────────
         if export_format == "9:16":
             video = _crop_to_vertical(video, crop_x_percent=crop_x_percent)
+            crop_w, crop_h = video.size
+
+            # Auto-cap quality: 9:16 crop from a 16:9 source gives crop_w = src_h * 9/16.
+            # If crop_w < requested output width we'd upscale, producing the same soft look
+            # as a lower-quality downscale.  Use the highest tier we can produce cleanly.
+            ACHIEVABLE: dict[str, int] = {"1080p": 1080, "720p": 720, "480p": 480}
+            if crop_w < ACHIEVABLE.get(quality, 0):
+                for tier in ("1080p", "720p", "480p"):
+                    if crop_w >= ACHIEVABLE[tier]:
+                        logger.warning(
+                            f"Quality auto-capped {quality} → {tier}: "
+                            f"crop width {crop_w}px is too small to produce "
+                            f"{quality} without upscaling "
+                            f"(need ≥{ACHIEVABLE.get(quality,0)}px)"
+                        )
+                        quality = tier
+                        break
+
             vq = VERTICAL_QUALITY.get(quality, VERTICAL_QUALITY["480p"])
         else:
             vq = LANDSCAPE_QUALITY.get(quality, LANDSCAPE_QUALITY["480p"])
@@ -389,7 +391,7 @@ def render_clip(
             )
             video.close()
 
-        return output_path
+        return output_path, quality
 
     finally:
         if segment_path and os.path.exists(segment_path):
