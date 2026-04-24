@@ -18,7 +18,7 @@ def _get_base_opts() -> dict:
         "quiet": False,
         "no_warnings": True,
         # ios/android expose full DASH format lists; tv for age-gated content
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}}
+        "extractor_args": {"youtube": {"player_client": ["tv", "web", "android"]}}
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
