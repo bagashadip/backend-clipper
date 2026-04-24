@@ -180,9 +180,10 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     ydl_opts = _get_base_opts()
     ydl_opts.update({
         "format": fmt,
-        # +res = sort all formats by HIGHEST resolution first.
-        # This ensures /best fallback picks 720p muxed (format 22) over 360p (format 18).
-        "format_sort": ["+res"],  # override fmt_sort — always prefer highest resolution
+        # res:N — prefer resolution closest to N (e.g. res:1080 picks 1080p,
+        # res:2160 picks the highest available resolution).
+        # NOTE: +res would be ASCENDING (lowest first) — do NOT use it.
+        "format_sort": fmt_sort,
         "outtmpl": output_path,
         # ── DIAGNOSTIC: download_ranges disabled ──────────────────────────
         # download_ranges cuts the stream mid-download via FFmpeg. On GCP this
