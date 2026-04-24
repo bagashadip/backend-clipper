@@ -17,8 +17,10 @@ def _get_base_opts() -> dict:
     opts = {
         "quiet": False,
         "no_warnings": True,
-        # ios/android expose full DASH format lists; tv for age-gated content
-        "extractor_args": {"youtube": {"player_client": ["tv", "web", "android"]}}
+        # ios is the most reliable client on datacenter/server IPs — it always
+        # exposes full DASH adaptive format lists regardless of IP reputation.
+        # android and web are fallbacks; tv handles age-gated content.
+        "extractor_args": {"youtube": {"player_client": ["ios", "android", "tv", "web"]}}
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
@@ -101,35 +103,38 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     # Prefer H264 (avc1) video + M4A audio so output is always true H264/MP4.
     # YouTube provides H264 up to 1080p; 1440p/2160p tiers fall through to VP9
     # but the postprocessor will recode those to H264 anyway.
+    # Never fall back to `best` (muxed progressive) — YouTube caps those at 720p.
+    # Always stay on adaptive (bestvideo+bestaudio) chains to get real resolution.
+    # H264 (avc1) is preferred; VP9/AV1 are acceptable since video_renderer.py
+    # re-encodes to H264 anyway.
     QUALITY_FORMATS = {
-        # 9:16 source: grab the best H264 available, fall back to any adaptive
         "best":  (
             "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[vcodec^=avc1]+bestaudio"
-            "/bestvideo+bestaudio/best"
+            "/bestvideo+bestaudio"
         ),
         "480p":  (
             "bestvideo[height<=480][vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[height<=480][vcodec^=avc1]+bestaudio"
-            "/bestvideo[height<=480]+bestaudio/best[height<=480]"
+            "/bestvideo[height<=480]+bestaudio"
         ),
         "720p":  (
             "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[height<=720][vcodec^=avc1]+bestaudio"
-            "/bestvideo[height<=720]+bestaudio/best[height<=720]"
+            "/bestvideo[height<=720]+bestaudio"
         ),
         "1080p": (
             "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]"
             "/bestvideo[height<=1080][vcodec^=avc1]+bestaudio"
-            "/bestvideo[height<=1080]+bestaudio/best"
+            "/bestvideo[height<=1080]+bestaudio"
         ),
         "1440p": (
             "bestvideo[height<=1440][vcodec^=avc1]+bestaudio[ext=m4a]"
-            "/bestvideo[height<=1440]+bestaudio/best"
+            "/bestvideo[height<=1440]+bestaudio"
         ),
         "2160p": (
             "bestvideo[height<=2160][vcodec^=avc1]+bestaudio[ext=m4a]"
-            "/bestvideo[height<=2160]+bestaudio/best"
+            "/bestvideo[height<=2160]+bestaudio"
         ),
     }
     fmt = QUALITY_FORMATS.get(quality, QUALITY_FORMATS["best"])
@@ -170,7 +175,7 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     ydl_opts.update({
         "format": fmt,
         # Prefer H264 > VP9 > AV1, and MP4/M4A containers
-        "format_sort": ["vcodec:h264", "acodec:m4a", "ext:mp4:m4a"],
+        "format_sort": ["vcodec:h264", "acodec:m4a", "ext:mp4"],
         "outtmpl": output_path,
         "download_ranges": yt_dlp.utils.download_range_func(
             None, [(start_time, end_time)]
