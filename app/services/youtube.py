@@ -20,7 +20,7 @@ def _get_base_opts() -> dict:
         # mweb uses a different API endpoint that often bypasses datacenter IP
         # restrictions; android gives DASH adaptive streams; ios gives HLS;
         # tv handles age-gated content; web as last resort.
-        "extractor_args": {"youtube": {"player_client": ["mweb", "android", "ios", "tv", "web"]}}
+        # "extractor_args": {"youtube": {"player_client": ["mweb", "android", "ios", "tv", "web"]}}
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
