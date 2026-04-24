@@ -65,11 +65,10 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
 
     ydl_opts = _get_base_opts()
     ydl_opts.update({
-        # bestaudio[ext=m4a]: prefer native m4a (no re-encode needed)
-        # bestaudio: any audio-only stream
-        # best: muxed stream as last resort — FFmpegExtractAudio will strip the video
-        # "format": "bestaudio[ext=m4a]/bestaudio/best",
-        # "format": "bestaudio/bestvideo[height<=360]+bestaudio/best",
+        # REQUIRED: without "format", yt-dlp has no selector and raises
+        # "Requested format is not available" on restricted IPs.
+        # Chain: prefer native m4a → any audio-only → muxed (FFmpegExtractAudio strips video)
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "format_sort": ["hasaud", "ext:m4a", "abr"],
         "extractor_args": {"youtube": {"player_client": ["android", "ios"]}},
         "outtmpl": output_template + ".%(ext)s",
