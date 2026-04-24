@@ -4,14 +4,11 @@ from uuid import UUID
 from datetime import datetime
 import re
 
-VALID_CATEGORIES = {"edukasi", "lucu", "urgent_panas"}
-
 
 # --- Request Schemas ---
 
 class ProcessURLRequest(BaseModel):
     youtube_url: str
-    categories: list[str] = ["edukasi", "lucu", "urgent_panas"]
 
     @field_validator("youtube_url")
     @classmethod
@@ -19,16 +16,6 @@ class ProcessURLRequest(BaseModel):
         pattern = r"^(https?://)?(www\.)?(youtube\.com/watch\?v=|youtu\.be/)[\w-]{11}"
         if not re.match(pattern, v):
             raise ValueError("Invalid YouTube URL")
-        return v
-
-    @field_validator("categories")
-    @classmethod
-    def validate_categories(cls, v: list[str]) -> list[str]:
-        if not v:
-            raise ValueError("At least one category is required")
-        invalid = set(v) - VALID_CATEGORIES
-        if invalid:
-            raise ValueError(f"Invalid categories: {invalid}. Valid: {VALID_CATEGORIES}")
         return v
 
 

@@ -14,8 +14,8 @@ MIN_VIRALITY_SCORE = 80
 
 # Tier-based duration limits
 TIER_DURATIONS: dict[str, dict[str, int]] = {
-    "free": {"min": 30, "max": 60},
-    "pro": {"min": 30, "max": 60},
+    "free":       {"min": 30, "max": 60},
+    "pro":        {"min": 30, "max": 60},
     "enterprise": {"min": 30, "max": 90},
 }
 
@@ -25,7 +25,6 @@ TIER_DURATIONS: dict[str, dict[str, int]] = {
 
 class ViralClip(BaseModel):
     title: str = Field(..., min_length=1)
-    hook_text: str = Field(default="", description="Kalimat hook pembuka klip")
     start_time: float = Field(..., ge=0)
     end_time: float = Field(..., gt=0)
     virality_score: int = Field(..., ge=1, le=100)
@@ -44,95 +43,72 @@ class ViralClip(BaseModel):
         return self.end_time - self.start_time
 
 # ---------------------------------------------------------------------------
-# Dynamic Prompt Generator
+# Prompt
 # ---------------------------------------------------------------------------
 
-_PROMPT_TEMPLATE = """Lu adalah seorang **Expert Content Director** dan **Video Editor** untuk platform short-form (TikTok, Reels, Shorts).
-Tugas lu adalah menganalisis transkrip video YouTube beserta timestamp-nya, dan mengekstrak momen-momen emas terbaik untuk dijadikan klip pendek.
+_PROMPT_TEMPLATE = """Kamu adalah seorang **Viral Content Strategist** dan **Senior Video Editor** berpengalaman untuk platform short-form (TikTok, Instagram Reels, YouTube Shorts).
 
-User telah meminta lu untuk HANYA mencari klip yang masuk dalam kategori berikut: [{kategori_diminta}].
+Tugasmu: Analisis transkrip video YouTube berikut dan ekstrak momen-momen terbaik yang berpotensi viral sebagai klip pendek.
 
-### DEFINISI KATEGORI:
-- Edukasi: Momen yang memberikan wawasan baru, tips praktis, fakta menarik, atau penjelasan suatu konsep dengan cara yang mudah dipahami.
-- Lucu: Momen komedi, candaan (jokes), reaksi kocak, atau situasi absurd yang menghibur.
-- Urgent dan Panas: Pembahasan yang emosional, perdebatan tajam, isu trending/kontroversial, atau opini yang memicu diskusi (hook yang provokatif).
+---
+### ATURAN WAJIB (HARUS DIPATUHI SEMUA):
 
-### ATURAN MUTLAK (WAJIB DIIKUTI):
-1. DURASI HARGA MATI: Durasi klip WAJIB di antara {min_duration} hingga {max_duration} detik. Jika sebuah ide atau argumen memakan waktu lebih dari {max_duration} detik, TINGGALKAN momen tersebut dan cari momen lain. JANGAN melanggar batas maksimal durasi.
-2. ANTI-INTRO & ANTI-BASA-BASI: ABAIKAN lagu intro, bumper video, sapaan awal ("Welcome back to my channel", "Halo guys"), atau promosi sponsor. START_TIME harus dimulai TEPAT saat pembicara mengucapkan kalimat "Hook" pertama yang berbobot.
-3. KONTEKS HARUS UTUH & SEMANTIC CLOSURE: Awalan klip harus jelas, dan akhiran klip HARUS pemikiran yang tuntas. Geser timestamp end_time ke titik terdekat di mana pembicara selesai menjelaskan poin tersebut (titik/jeda napas), TETAPI tetap harus mematuhi aturan nomor 1 (maksimal {max_duration} detik).
-4. HOOK KUAT: Pastikan 3-5 detik pertama memiliki kalimat pancingan (hook) yang provokatif atau mengundang rasa penasaran.
-5. start_time dan end_time HARUS merujuk pada timestamp yang ada di transkrip secara presisi.
-6. Klip harus bisa berdiri sendiri (stand-alone) tanpa perlu konteks tambahan dari video asli.
-7. Klip TIDAK BOLEH saling tumpang tindih (overlap).
-8. Berikan `virality_score` antara 1-100. Nilai berdasarkan kekuatan hook dan seberapa padat informasinya tanpa bertele-tele.
-9. HANYA kembalikan klip dengan virality_score >= 80.
-10. Kembalikan MAKSIMAL 15 klip. Jika ada lebih, pilih 15 dengan skor tertinggi.
+1. **DURASI**: Setiap klip HARUS berdurasi antara {min_duration}–{max_duration} detik. Tidak kurang, tidak lebih. Ini harga mati.
 
-### CATATAN KONDISI TRANSKRIP:
-Transkrip JSON yang lu terima dihasilkan oleh mesin Speech-to-Text (Whisper). Akan ada banyak kesalahan ejaan (typo), salah tangkap bahasa gaul, atau singkatan yang ditulis berdasarkan fonetiknya (contoh: "FYP" menjadi "evyepi").
-TUGAS LU: Gunakan nalar semantik untuk memahami konteks asli dari kalimat yang typo tersebut saat mencari Hook dan momen klip. Jangan sampai momen emas terlewat hanya karena typo mesin.
+2. **MULAI DARI HOOK**: `start_time` harus tepat di momen pembicara mengucapkan kalimat pertama yang berbobot — bukan intro, bukan sapaan, bukan sponsor. Langsung inti.
 
-### PENTING TENTANG END_TIME:
-Karena lu hanya membaca teks, lu harus sangat peka terhadap 'Semantic Closure' (Akhir Pemikiran).
-Jangan pernah memotong (end_time) saat pembicara sedang menggunakan kata sambung (dan, tetapi, karena, sehingga) atau di tengah penyampaian ide.
-Pastikan kata terakhir di batas end_time adalah sebuah kesimpulan, akhir dari sebuah poin, atau punchline yang tuntas. Lebih baik durasi klip lebih panjang 3 detik daripada memotong kalimat secara prematur."
+3. **AKHIRI DENGAN TUNTAS**: `end_time` harus di titik pembicara benar-benar menyelesaikan satu pikiran/poin — bukan di tengah kalimat, bukan sebelum kesimpulan. Lebih baik 2–3 detik lebih panjang daripada memotong di tengah.
 
+4. **BERDIRI SENDIRI**: Klip harus dapat dipahami tanpa konteks video asli.
+
+5. **TIDAK OVERLAP**: Klip tidak boleh saling tumpang tindih satu sama lain.
+
+6. **SKOR MINIMAL 80**: Hanya kembalikan klip dengan `virality_score` ≥ 80. Jika tidak ada yang memenuhi, jangan kembalikan apa-apa.
+
+7. **MAKSIMAL {max_clips} KLIP**: Jika lebih, pilih yang skor tertinggi.
+
+8. **TIMESTAMP PRESISI**: `start_time` dan `end_time` harus merujuk pada timestamp yang benar-benar ada di transkrip.
+
+---
+### KRITERIA KLIP YANG VIRAL:
+
+Pilih momen yang mengandung salah satu atau lebih dari ini:
+- **Hook provokatif**: Kalimat pembuka yang langsung memancing rasa penasaran atau emosi
+- **Insight padat**: Fakta mengejutkan, tips praktis, atau perspektif unik yang disampaikan ringkas
+- **Momen emosional**: Konflik, ketegangan, humor, atau momen "aha" yang autentik
+- **Cerita mini**: Arc yang utuh — ada setup, konflik/inti, resolusi — dalam durasi pendek
+
+---
+### TENTANG TRANSKRIP:
+
+Transkrip dihasilkan oleh mesin Speech-to-Text (Whisper). Mungkin ada typo, kesalahan ejaan gaul, atau kata-kata yang salah ditangkap. Gunakan nalar semantik untuk memahami konteks sesungguhnya.
+
+---
 DURASI VIDEO: {video_duration} detik
 TRANSKRIP:
 {transcript_text}
 
-FORMAT OUTPUT — JSON array dengan field berikut untuk setiap klip:
-- "title": Judul pendek yang catchy dan click-worthy (Bahasa Indonesia).
-- "hook_text": Kalimat hook pembuka klip yang membuat penonton penasaran.
-- "start_time": Waktu mulai dalam detik (angka desimal).
-- "end_time": Waktu selesai dalam detik (angka desimal).
-- "virality_score": Skor viralitas 1-100 (integer).
-- "reasoning": Satu kalimat singkat kenapa klip ini viral (Bahasa Indonesia)."""
-
-# Category label mapping for prompt injection
-_CATEGORY_LABELS = {
-    "edukasi": "Edukasi",
-    "lucu": "Lucu",
-    "urgent_panas": "Urgent dan Panas",
-}
+---
+Kembalikan JSON array. Setiap item:
+- "title": Judul pendek yang catchy (Bahasa Indonesia, maks 10 kata)
+- "start_time": Waktu mulai (detik, desimal)
+- "end_time": Waktu selesai (detik, desimal)
+- "virality_score": 1–100 (integer)
+- "reasoning": Satu kalimat — kenapa ini viral (Bahasa Indonesia)"""
 
 
-def generate_gemini_prompt(
-    user_tier: str,
-    custom_min: int = 30,
-    custom_max: int = 60,
-    categories: list[str] | None = None,
-) -> str:
-    """
-    Return the Gemini prompt template with duration constraints based on tier
-    and category filtering injected.
-
-    - free: hardcoded 15-30s
-    - pro/enterprise: uses custom_min / custom_max (defaults 30-60s)
-    """
-    if user_tier == "free":
-        min_dur = TIER_DURATIONS["free"]["min"]
-        max_dur = TIER_DURATIONS["free"]["max"]
-    else:
-        min_dur = max(1, custom_min)
-        max_dur = max(min_dur + 1, custom_max)
-
-    # Build category string for prompt
-    if categories:
-        kategori_diminta = ", ".join(
-            _CATEGORY_LABELS.get(c, c) for c in categories
-        )
-    else:
-        kategori_diminta = ", ".join(_CATEGORY_LABELS.values())
-
-    # Return the template with duration and category placeholders filled,
-    # but {video_duration} and {transcript_text} still open.
+def _build_prompt(user_tier: str, video_duration: float, transcript_text: str) -> str:
+    tier_cfg = TIER_DURATIONS.get(user_tier, TIER_DURATIONS["free"])
+    min_dur = tier_cfg["min"]
+    max_dur = tier_cfg["max"]
+    dur_str = f"{video_duration:.1f}" if video_duration else "unknown"
     return (
         _PROMPT_TEMPLATE
         .replace("{min_duration}", str(min_dur))
         .replace("{max_duration}", str(max_dur))
-        .replace("{kategori_diminta}", kategori_diminta)
+        .replace("{max_clips}", str(MAX_CLIPS))
+        .replace("{video_duration}", dur_str)
+        .replace("{transcript_text}", transcript_text)
     )
 
 
@@ -141,14 +117,13 @@ CLIP_SCHEMA = types.Schema(
     items=types.Schema(
         type=types.Type.OBJECT,
         properties={
-            "title": types.Schema(type=types.Type.STRING, description="Judul pendek yang catchy"),
-            "hook_text": types.Schema(type=types.Type.STRING, description="Kalimat hook pembuka klip"),
-            "start_time": types.Schema(type=types.Type.NUMBER, description="Waktu mulai dalam detik"),
-            "end_time": types.Schema(type=types.Type.NUMBER, description="Waktu selesai dalam detik"),
+            "title":          types.Schema(type=types.Type.STRING,  description="Judul pendek yang catchy"),
+            "start_time":     types.Schema(type=types.Type.NUMBER,  description="Waktu mulai dalam detik"),
+            "end_time":       types.Schema(type=types.Type.NUMBER,  description="Waktu selesai dalam detik"),
             "virality_score": types.Schema(type=types.Type.INTEGER, description="Skor viralitas 1-100"),
-            "reasoning": types.Schema(type=types.Type.STRING, description="Alasan kenapa klip ini viral"),
+            "reasoning":      types.Schema(type=types.Type.STRING,  description="Alasan kenapa klip ini viral"),
         },
-        required=["title", "hook_text", "start_time", "end_time", "virality_score", "reasoning"],
+        required=["title", "start_time", "end_time", "virality_score", "reasoning"],
     ),
 )
 
@@ -269,9 +244,6 @@ def select_viral_clips(
     transcript_text: str,
     video_duration: float = 0,
     user_tier: str = "free",
-    custom_min: int | None = None,
-    custom_max: int | None = None,
-    categories: list[str] | None = None,
 ) -> list[dict]:
     """
     Backward-compatible wrapper for process_video_task.
@@ -281,9 +253,6 @@ def select_viral_clips(
         transcript_text,
         video_duration=video_duration,
         user_tier=user_tier,
-        custom_min=custom_min,
-        custom_max=custom_max,
-        categories=categories,
     )
     return [c.model_dump() for c in clips]
 
@@ -292,32 +261,19 @@ def extract_and_filter_clips(
     transcript_text: str,
     video_duration: float = 0,
     user_tier: str = "free",
-    custom_min: int | None = None,
-    custom_max: int | None = None,
-    categories: list[str] | None = None,
 ) -> list[ViralClip]:
     """
     Full pipeline: prompt Gemini → parse → validate → smart-pad → filter → cap.
 
-    Args:
-        transcript_text: Formatted transcript with timestamps.
-        video_duration: Total video duration in seconds.
-        user_tier: "free", "pro", or "enterprise".
-        custom_min: Override minimum clip duration (pro/enterprise only).
-        custom_max: Override maximum clip duration (pro/enterprise only).
-
     Returns:
-        List of ViralClip objects (score >= 80, padded, max 15 items).
+        List of ViralClip objects (score >= 80, padded to min_dur, max 15 items).
     """
-    # Resolve duration constraints
     tier_cfg = TIER_DURATIONS.get(user_tier, TIER_DURATIONS["free"])
-    min_dur = custom_min if (custom_min is not None and user_tier != "free") else tier_cfg["min"]
-    max_dur = custom_max if (custom_max is not None and user_tier != "free") else tier_cfg["max"]
+    min_dur = tier_cfg["min"]
+    max_dur = tier_cfg["max"]
 
     # --- Build prompt ---
-    prompt_template = generate_gemini_prompt(user_tier, min_dur, max_dur, categories=categories)
-    dur_str = f"{video_duration:.1f}" if video_duration else "unknown"
-    prompt = prompt_template.format(transcript_text=transcript_text, video_duration=dur_str)
+    prompt = _build_prompt(user_tier, video_duration, transcript_text)
 
     # --- Call Gemini ---
     client = genai.Client(

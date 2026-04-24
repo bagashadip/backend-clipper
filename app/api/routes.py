@@ -66,7 +66,7 @@ def process_url(
     db.commit()
     db.refresh(video)
 
-    process_video_task.delay(str(video.id), request.categories)
+    process_video_task.delay(str(video.id))
 
     return ProcessURLResponse(
         video_id=video.id,
