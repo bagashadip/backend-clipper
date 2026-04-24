@@ -17,9 +17,8 @@ def _get_base_opts() -> dict:
     opts = {
         "quiet": False,
         "no_warnings": True,
-        # ios/android clients expose full DASH format lists;
-        # tv is kept as last resort for age-gated content.
-        # "extractor_args": {"youtube": {"player_client": ["ios", "android", "web", "tv"]}},
+        # ios/android expose full DASH format lists; tv for age-gated content
+        "extractor_args": {"youtube": {"player_client": ["ios", "android", "web", "tv"]}},
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
@@ -100,11 +99,11 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     output_path = os.path.join(output_dir, "segment.mp4")
 
     QUALITY_FORMATS = {
-        "480p":  "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best",
-        "720p":  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best",
-        "1080p": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-        "1440p": "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best[height<=1440]/best",
-        "2160p": "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160]/best",
+        "480p":  "bestvideo[height<=480]+bestaudio/best[height<=480]/best",
+        "720p":  "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "1440p": "bestvideo[height<=1440]+bestaudio/best[height<=1440]/best",
+        "2160p": "bestvideo[height<=2160]+bestaudio/best[height<=2160]/best",
     }
     fmt = QUALITY_FORMATS.get(quality, QUALITY_FORMATS["480p"])
 
