@@ -69,7 +69,11 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
         # bestaudio: any audio-only stream
         # best: muxed stream as last resort — FFmpegExtractAudio will strip the video
         "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "format_sort": ["+abr"],  # highest audio bitrate first
+        "format_sort": [
+            "hasaud",
+            "ext:m4a",
+            "abr"
+        ],
         "outtmpl": output_template + ".%(ext)s",
         "extract_flat": False,
         "postprocessors": [{
