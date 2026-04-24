@@ -134,6 +134,34 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     }
     fmt = QUALITY_FORMATS.get(quality, QUALITY_FORMATS["best"])
 
+    # Log the format string being requested
+    logger.info(f"[yt-dlp] Requested quality={quality!r}, format string: {fmt}")
+
+    def _log_format(d: dict) -> None:
+        """Progress hook: log the actual format yt-dlp selected on first download start."""
+        if d.get("status") != "downloading":
+            return
+        info = d.get("info_dict", {})
+        # Only log once per stream (avoid spam on each chunk)
+        if info.get("_format_logged"):
+            return
+        info["_format_logged"] = True
+
+        fmt_id   = info.get("format_id", "?")
+        vcodec   = info.get("vcodec", "?")
+        acodec   = info.get("acodec", "?")
+        height   = info.get("height", "?")
+        width    = info.get("width", "?")
+        ext      = info.get("ext", "?")
+        filesize = info.get("filesize") or info.get("filesize_approx")
+        size_mb  = f"{filesize / 1024 / 1024:.1f} MB" if filesize else "unknown size"
+
+        logger.info(
+            f"[yt-dlp] Downloading format_id={fmt_id!r} | "
+            f"{width}x{height} | vcodec={vcodec} | acodec={acodec} | "
+            f"ext={ext} | {size_mb}"
+        )
+
     # Format time as HH:MM:SS
     start_str = _seconds_to_timestamp(start_time)
     end_str = _seconds_to_timestamp(end_time)
@@ -149,6 +177,7 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
         ),
         "force_keyframes_at_cuts": True,
         "merge_output_format": "mp4",
+        "progress_hooks": [_log_format],
     })
 
     try:
