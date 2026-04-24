@@ -14,7 +14,7 @@ MIN_VIRALITY_SCORE = 80
 
 # Tier-based duration limits
 TIER_DURATIONS: dict[str, dict[str, int]] = {
-    "free": {"min": 15, "max": 30},
+    "free": {"min": 30, "max": 60},
     "pro": {"min": 30, "max": 60},
     "enterprise": {"min": 30, "max": 90},
 }
