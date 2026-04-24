@@ -255,18 +255,18 @@ def render_clip(
             # Auto-cap quality: 9:16 crop from a 16:9 source gives crop_w = src_h * 9/16.
             # If crop_w < requested output width we'd upscale, producing the same soft look
             # as a lower-quality downscale.  Use the highest tier we can produce cleanly.
-            ACHIEVABLE: dict[str, int] = {"1080p": 1080, "720p": 720, "480p": 480}
-            if crop_w < ACHIEVABLE.get(quality, 0):
-                for tier in ("1080p", "720p", "480p"):
-                    if crop_w >= ACHIEVABLE[tier]:
-                        logger.warning(
-                            f"Quality auto-capped {quality} → {tier}: "
-                            f"crop width {crop_w}px is too small to produce "
-                            f"{quality} without upscaling "
-                            f"(need ≥{ACHIEVABLE.get(quality,0)}px)"
-                        )
-                        quality = tier
-                        break
+            # ACHIEVABLE: dict[str, int] = {"1080p": 1080, "720p": 720, "480p": 480}
+            # if crop_w < ACHIEVABLE.get(quality, 0):
+            #     for tier in ("1080p", "720p", "480p"):
+            #         if crop_w >= ACHIEVABLE[tier]:
+            #             logger.warning(
+            #                 f"Quality auto-capped {quality} → {tier}: "
+            #                 f"crop width {crop_w}px is too small to produce "
+            #                 f"{quality} without upscaling "
+            #                 f"(need ≥{ACHIEVABLE.get(quality,0)}px)"
+            #             )
+            #             quality = tier
+            #             break
 
             vq = VERTICAL_QUALITY.get(quality, VERTICAL_QUALITY["480p"])
         else:
