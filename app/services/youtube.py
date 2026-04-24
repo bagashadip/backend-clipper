@@ -74,6 +74,7 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
             "ext:m4a",
             "abr"
         ],
+        "extractor_args": {"youtube": {"player_client": ["android", "ios"]}},
         "outtmpl": output_template + ".%(ext)s",
         "extract_flat": False,
         "postprocessors": [{
