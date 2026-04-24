@@ -99,6 +99,7 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     output_path = os.path.join(output_dir, "segment.mp4")
 
     QUALITY_FORMATS = {
+        "best":  "bestvideo+bestaudio/best",   # highest available, no height filter
         "480p":  "best[height<=480]",
         "720p":  "best[height<=720]",
         "1080p": "bestvideo[height>=1080]+bestaudio/best",

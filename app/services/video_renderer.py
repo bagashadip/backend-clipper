@@ -233,7 +233,11 @@ def render_clip(
     try:
         # ── Step 1: Download source segment ───────────────────────────────
         if export_format == "9:16":
-            source_quality = SOURCE_QUALITY_FOR_VERTICAL.get(quality, quality)
+            # Always download the best available source for 9:16 crops.
+            # After crop, auto-cap (Step 2) determines the actual achievable quality.
+            # Using a fixed height mapping risks falling back to muxed 720p when the
+            # target height is not available (e.g. requesting 4K from a 1080p video).
+            source_quality = "best"
         else:
             source_quality = quality
 
