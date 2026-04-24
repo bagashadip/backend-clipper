@@ -17,10 +17,10 @@ def _get_base_opts() -> dict:
     opts = {
         "quiet": False,
         "no_warnings": True,
-        # android gives DASH adaptive streams (separate video+audio) on most IPs.
-        # ios returns HLS (muxed) streams — useful fallback but no DASH splitting.
+        # mweb uses a different API endpoint that often bypasses datacenter IP
+        # restrictions; android gives DASH adaptive streams; ios gives HLS;
         # tv handles age-gated content; web as last resort.
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv", "web"]}}
+        "extractor_args": {"youtube": {"player_client": ["mweb", "android", "ios", "tv", "web"]}}
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
@@ -127,6 +127,24 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
         f"format_sort={fmt_sort}"
     )
 
+    # Pre-download: list all formats YouTube is offering from this IP.
+    # If only format 18 (360p) appears, cookies are expired or IP is restricted.
+    _debug_opts = _get_base_opts()
+    _debug_opts["quiet"] = True
+    _debug_opts["no_warnings"] = True
+    try:
+        with yt_dlp.YoutubeDL(_debug_opts) as _ydl:
+            _info = _ydl.extract_info(youtube_url, download=False)
+            if _info:
+                _fmts = [
+                    (f.get("format_id"), f.get("height"), (f.get("vcodec") or "")[:12], f.get("ext"))
+                    for f in (_info.get("formats") or [])
+                ]
+                _fmts.sort(key=lambda x: x[1] or 0, reverse=True)
+                logger.info(f"[yt-dlp] Formats available from this IP (top 15): {_fmts[:15]}")
+    except Exception as _e:
+        logger.warning(f"[yt-dlp] Format listing failed: {_e}")
+
     def _log_format(d: dict) -> None:
         """Progress hook: log the actual format yt-dlp selected on first download start."""
         if d.get("status") != "downloading":
@@ -154,7 +172,9 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     ydl_opts = _get_base_opts()
     ydl_opts.update({
         "format": fmt,
-        "format_sort": fmt_sort,
+        # +res = sort all formats by HIGHEST resolution first.
+        # This ensures /best fallback picks 720p muxed (format 22) over 360p (format 18).
+        "format_sort": ["+res"],  # override fmt_sort — always prefer highest resolution
         "outtmpl": output_path,
         # ── DIAGNOSTIC: download_ranges disabled ──────────────────────────
         # download_ranges cuts the stream mid-download via FFmpeg. On GCP this
