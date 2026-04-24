@@ -70,7 +70,11 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
         # Chain: prefer native m4a → any audio-only → muxed (FFmpegExtractAudio strips video)
         "format": "bestaudio[ext=m4a]/bestaudio/best",
         "format_sort": ["hasaud", "ext:m4a", "abr"],
-        "extractor_args": {"youtube": {"player_client": ["android", "ios"]}},
+        # Do NOT restrict to android/ios: those clients require GVS PO Token
+        # (YouTube anti-bot), causing all formats to be skipped on GCP IPs.
+        # With valid cookies.txt, the default web client works and serves all
+        # DASH audio-only streams (formats 139/140). Without valid cookies,
+        # all clients are unreliable on datacenter IPs → refresh cookies.txt.
         "outtmpl": output_template + ".%(ext)s",
         "extract_flat": False,
         "postprocessors": [{
