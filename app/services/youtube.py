@@ -96,63 +96,42 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
 
 
 def download_video_segment(youtube_url: str, start_time: float, end_time: float, quality: str = "480p") -> str:
-    """Download only a specific segment of the video using yt-dlp --download-sections."""
+    """Download only a specific segment of the video using yt-dlp --download-sections.
+
+    NOTE: download_ranges is currently DISABLED for diagnostic purposes.
+    Theory: FFmpeg on GCP fails to cut DASH streams mid-stream, causing yt-dlp
+    to silently fall back to a low-res muxed format. Without download_ranges,
+    yt-dlp downloads the full video at the correct resolution — MoviePy then
+    trims the segment. Confirm by checking the [yt-dlp] log lines for resolution.
+    """
     output_dir = tempfile.mkdtemp(prefix="clipper_segment_")
     output_path = os.path.join(output_dir, "segment.mp4")
 
-    # Prefer H264 (avc1) video + M4A audio so output is always true H264/MP4.
-    # YouTube provides H264 up to 1080p; 1440p/2160p tiers fall through to VP9
-    # but the postprocessor will recode those to H264 anyway.
-    # Format priority: H264 adaptive > any adaptive > muxed progressive (last resort).
-    # /best at the end is intentional — better to get 720p muxed than to crash.
-    # android client gives DASH (bestvideo+bestaudio splits); ios gives HLS (muxed).
-    QUALITY_FORMATS = {
-        "best":  (
-            "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]"
-            "/bestvideo[vcodec^=avc1]+bestaudio"
-            "/bestvideo+bestaudio"
-            "/best"
-        ),
-        "480p":  (
-            "bestvideo[height<=480][vcodec^=avc1]+bestaudio[ext=m4a]"
-            "/bestvideo[height<=480][vcodec^=avc1]+bestaudio"
-            "/bestvideo[height<=480]+bestaudio"
-            "/best[height<=480]/best"
-        ),
-        "720p":  (
-            "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]"
-            "/bestvideo[height<=720][vcodec^=avc1]+bestaudio"
-            "/bestvideo[height<=720]+bestaudio"
-            "/best[height<=720]/best"
-        ),
-        "1080p": (
-            "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]"
-            "/bestvideo[height<=1080][vcodec^=avc1]+bestaudio"
-            "/bestvideo[height<=1080]+bestaudio"
-            "/best"
-        ),
-        "1440p": (
-            "bestvideo[height<=1440][vcodec^=avc1]+bestaudio[ext=m4a]"
-            "/bestvideo[height<=1440]+bestaudio"
-            "/best"
-        ),
-        "2160p": (
-            "bestvideo[height<=2160][vcodec^=avc1]+bestaudio[ext=m4a]"
-            "/bestvideo[height<=2160]+bestaudio"
-            "/best"
-        ),
+    # Map quality string → target height for format_sort res: hint
+    QUALITY_HEIGHT = {
+        "best": None,  # no height preference, just take highest
+        "480p": 480,
+        "720p": 720,
+        "1080p": 1080,
+        "1440p": 1440,
+        "2160p": 2160,
     }
-    fmt = QUALITY_FORMATS.get(quality, QUALITY_FORMATS["best"])
+    target_height = QUALITY_HEIGHT.get(quality)
 
-    # Log the format string being requested
-    logger.info(f"[yt-dlp] Requested quality={quality!r}, format string: {fmt}")
+    fmt = "bestvideo+bestaudio/best"
+    fmt_sort = ["res:" + str(target_height)] if target_height else ["res:2160"]
+
+    logger.info(
+        f"[yt-dlp] Requested quality={quality!r} "
+        f"(target_height={target_height}), format={fmt!r}, "
+        f"format_sort={fmt_sort}"
+    )
 
     def _log_format(d: dict) -> None:
         """Progress hook: log the actual format yt-dlp selected on first download start."""
         if d.get("status") != "downloading":
             return
         info = d.get("info_dict", {})
-        # Only log once per stream (avoid spam on each chunk)
         if info.get("_format_logged"):
             return
         info["_format_logged"] = True
@@ -172,19 +151,20 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
             f"ext={ext} | {size_mb}"
         )
 
-    # Format time as HH:MM:SS
-    start_str = _seconds_to_timestamp(start_time)
-    end_str = _seconds_to_timestamp(end_time)
-
     ydl_opts = _get_base_opts()
     ydl_opts.update({
         "format": fmt,
-        # Prefer H264 > VP9 > AV1, and MP4/M4A containers
-        "format_sort": ["vcodec:h264", "acodec:m4a", "ext:mp4"],
+        "format_sort": fmt_sort,
         "outtmpl": output_path,
-        "download_ranges": yt_dlp.utils.download_range_func(
-            None, [(start_time, end_time)]
-        ),
+        # ── DIAGNOSTIC: download_ranges disabled ──────────────────────────
+        # download_ranges cuts the stream mid-download via FFmpeg. On GCP this
+        # appears to cause DASH segment fetch failures, making yt-dlp silently
+        # fall back to a low-res muxed format. Disabled until confirmed fixed.
+        # Once confirmed, re-enable and trim will happen server-side:
+        #   "download_ranges": yt_dlp.utils.download_range_func(
+        #       None, [(start_time, end_time)]
+        #   ),
+        # ──────────────────────────────────────────────────────────────────
         "force_keyframes_at_cuts": True,
         "merge_output_format": "mp4",
         "progress_hooks": [_log_format],

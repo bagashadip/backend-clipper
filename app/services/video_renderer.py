@@ -244,12 +244,23 @@ def render_clip(
         # Add buffer so the cut ends naturally (breath / pitch drop)
         end_time_final = end_time + CLIP_END_BUFFER
 
-        logger.info(f"Downloading segment {start_time:.1f}s - {end_time_final:.1f}s "
+        logger.info(f"Downloading full video then trimming {start_time:.1f}s - {end_time_final:.1f}s "
                     f"(source={source_quality}, format={export_format}, crop={crop_x_percent:.0f}%, "
                     f"buffer={CLIP_END_BUFFER}s)")
         segment_path = download_video_segment(youtube_url, start_time, end_time_final, quality=source_quality)
 
         video = VideoFileClip(segment_path)
+
+        # Trim to the requested time window (download_ranges disabled on server,
+        # so the full video is downloaded; we cut here instead)
+        video_duration = video.duration
+        if video_duration > (end_time_final - start_time) + 5:
+            # Full video downloaded — trim to the clip window
+            logger.info(
+                f"Full video detected ({video_duration:.1f}s), "
+                f"trimming to [{start_time:.1f}s, {end_time_final:.1f}s]"
+            )
+            video = video.subclip(start_time, min(end_time_final, video_duration))
 
         # ── Step 2: Crop & resize ─────────────────────────────────────────
         if export_format == "9:16":
