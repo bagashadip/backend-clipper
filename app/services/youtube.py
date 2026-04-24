@@ -68,8 +68,9 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
         # bestaudio[ext=m4a]: prefer native m4a (no re-encode needed)
         # bestaudio: any audio-only stream
         # best: muxed stream as last resort — FFmpegExtractAudio will strip the video
-        "format": "best",
-        # "extractor_args": {"youtube": {"player_client": ["android", "ios"]}},
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format_sort": ["hasaud", "ext:m4a", "abr"],
+        "extractor_args": {"youtube": {"player_client": ["android", "ios"]}},
         "outtmpl": output_template + ".%(ext)s",
         "extract_flat": False,
         "postprocessors": [{
