@@ -25,7 +25,11 @@ def _get_base_opts() -> dict:
         "verbose": True, # INI WAJIB ADA BUAT DEBUGGING TOKEN
         "extractor_args": {
             "youtube": {
-                "player_client": ["mweb", "web"],
+                # mweb: recommended with bgutil (GVS PO token provided automatically)
+                # web_safari: provides HLS (m3u8) formats that do NOT require a
+                #   GVS PO token and are NOT affected by SABR enforcement
+                # web: fallback; SABR-forced on this IP but format 18 may still appear
+                "player_client": ["mweb", "web_safari", "web"],
             },
             "youtubepot-bgutilhttp": {
                 "base_url": [BGUTIL_POT_SERVER_URL],
@@ -126,9 +130,12 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     target_height = QUALITY_HEIGHT.get(quality)
 
     if target_height:
-        fmt = f"bestvideo[height<={target_height}]+bestaudio/bestvideo[height<={target_height}]+18/best/18"
+        # 1st: separate DASH bestvideo+bestaudio (best quality, needs two streams)
+        # 2nd: best combined format (HLS from mweb/web_safari) at or below target height
+        # 3rd: absolute best combined format regardless of height (last resort)
+        fmt = f"bestvideo[height<={target_height}]+bestaudio/best[height<={target_height}]/best"
     else:
-        fmt = "bestvideo+bestaudio/bestvideo+18/best/18"
+        fmt = "bestvideo+bestaudio/best"
         
     fmt_sort = ["res:" + str(target_height)] if target_height else ["res:2160"]
 
