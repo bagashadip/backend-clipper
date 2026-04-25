@@ -125,12 +125,10 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     }
     target_height = QUALITY_HEIGHT.get(quality)
 
-    # STRING DINAMIS: Kunci resolusinya langsung di tahap pencarian format,
-    # bukan cuma ngandelin format_sort. Ini menghemat bandwidth server lu.
     if target_height:
-        fmt = f"bestvideo[height<={target_height}]+bestaudio/bestvideo[height<={target_height}]+18/best"
+        fmt = f"bestvideo[height<={target_height}]+bestaudio/bestvideo[height<={target_height}]+18/best/18"
     else:
-        fmt = "bestvideo+bestaudio/bestvideo+18/best"
+        fmt = "bestvideo+bestaudio/bestvideo+18/best/18"
         
     fmt_sort = ["res:" + str(target_height)] if target_height else ["res:2160"]
 
@@ -155,6 +153,10 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
 
     ydl_opts = _get_base_opts()
     
+    # KEMBALIKAN BEDAH SESAR: Paksa pakai TV/iOS/Android buat nembus SABR.
+    # Tanpa ini, kita bakal balik lagi jadi klien 'web' dan kena blokir total.
+    ydl_opts.setdefault("extractor_args", {}).setdefault("youtube", {})["player_client"] = ["tv", "ios", "android"]
+
     ydl_opts.update({
         "format": fmt,
         "format_sort": fmt_sort,
