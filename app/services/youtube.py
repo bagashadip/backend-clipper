@@ -22,12 +22,14 @@ def _get_base_opts() -> dict:
     opts = {
         "quiet": False,
         "no_warnings": True,
-        # Use mweb client — recommended when pairing with a PO Token provider.
-        # mweb only requires a GVS PO Token (which bgutil supplies automatically)
-        # and avoids the datacenter-IP restrictions that hit the web/android clients.
+        # mweb is the recommended client when paired with a PO Token provider:
+        # only needs a GVS PO Token (bgutil supplies it automatically).
+        # web is included as fallback because mweb does NOT serve audio-only
+        # DASH streams (formats 139/140) — those only come from the web client.
+        # bgutil will provide PO tokens for both clients automatically.
         "extractor_args": {
             "youtube": {
-                "player_client": ["mweb"],
+                "player_client": ["mweb", "web"],
             },
             # Tell the bgutil HTTP plugin where our sidecar server is.
             # If BGUTIL_POT_SERVER_URL matches the plugin default (127.0.0.1:4416)
