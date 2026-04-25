@@ -2,7 +2,6 @@ import os
 import logging
 import tempfile
 import yt_dlp
-from app.services.youtube import _get_base_opts
 
 logger = logging.getLogger(__name__)
 
