@@ -152,10 +152,10 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
         logger.info(f"[yt-dlp] Downloading format_id={fmt_id!r} | {width}x{height}")
 
     ydl_opts = _get_base_opts()
-    
-    # KEMBALIKAN BEDAH SESAR: Paksa pakai TV/iOS/Android buat nembus SABR.
-    # Tanpa ini, kita bakal balik lagi jadi klien 'web' dan kena blokir total.
-    ydl_opts.setdefault("extractor_args", {}).setdefault("youtube", {})["player_client"] = ["tv", "ios", "android"]
+    # Do NOT override player_client here — _get_base_opts() already sets
+    # ["mweb", "web"] which bgutil supplies GVS PO tokens for automatically.
+    # tv/ios/android are NOT supported by the bgutil provider and fall back
+    # to format 18 (360p muxed) on datacenter IPs.
 
     ydl_opts.update({
         "format": fmt,
