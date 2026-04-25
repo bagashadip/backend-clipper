@@ -143,10 +143,15 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     )
 
     # Pre-download: list all formats YouTube is offering from this IP.
-    # If only format 18 (360p) appears, cookies are expired or IP is restricted.
     _debug_opts = _get_base_opts()
     _debug_opts["quiet"] = True
     _debug_opts["no_warnings"] = True
+    
+    # ── BEDAH SESAR 1: Ganti klien ke TV untuk bypass SABR dan dapet 4K ──
+    # Kita pakai setdefault untuk jaga-jaga biar nggak KeyError, 
+    # tapi intinya ini nimpa array player_client TANPA menghapus PO Token.
+    _debug_opts.setdefault("extractor_args", {}).setdefault("youtube", {})["player_client"] = ["tv", "ios", "android"]
+
     try:
         with yt_dlp.YoutubeDL(_debug_opts) as _ydl:
             _info = _ydl.extract_info(youtube_url, download=False)
@@ -185,6 +190,10 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
         )
 
     ydl_opts = _get_base_opts()
+    
+    # ── BEDAH SESAR 2: Terapkan klien TV ke proses download aslinya ──
+    ydl_opts.setdefault("extractor_args", {}).setdefault("youtube", {})["player_client"] = ["tv", "ios", "android"]
+
     ydl_opts.update({
         "format": fmt,
         # res:N — prefer resolution closest to N (e.g. res:1080 picks 1080p,
