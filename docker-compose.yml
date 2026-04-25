@@ -28,11 +28,14 @@ services:
     expose:
       - "4416"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4416/ || exit 1"]
-      interval: 30s
+      # Use node (always available in the image) to check the server responds.
+      # Exits 0 for any HTTP response, 1 if connection refused/timeout.
+      # This avoids relying on wget/curl exit codes for non-2xx warning responses.
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:4416/',function(r){process.exit(0)}).on('error',function(){process.exit(1)})\""]
+      interval: 20s
       timeout: 10s
-      start_period: 15s
-      retries: 3
+      start_period: 30s
+      retries: 5
 
   # ── PostgreSQL ────────────────────────────────────────────────────────────
   postgres:
