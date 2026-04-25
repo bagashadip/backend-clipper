@@ -77,7 +77,7 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
     ydl_opts.update({
         # Fleksibel: Cari m4a murni. Kalau gak ada, ambil best audio.
         # Kalau best audio disembunyiin juga, ambil best (mp4 gabungan).
-        "format": "m4a/bestaudio/best",
+        "format": "18/b",
         
         # HAPUS BARIS "format_sort" TOTAL DARI SINI
         
