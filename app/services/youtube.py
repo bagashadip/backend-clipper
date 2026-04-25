@@ -25,11 +25,15 @@ def _get_base_opts() -> dict:
         "verbose": True, # INI WAJIB ADA BUAT DEBUGGING TOKEN
         "extractor_args": {
             "youtube": {
-                # mweb: recommended with bgutil (GVS PO token provided automatically)
-                # web_safari: provides HLS (m3u8) formats that do NOT require a
-                #   GVS PO token and are NOT affected by SABR enforcement
-                # web: fallback; SABR-forced on this IP but format 18 may still appear
-                "player_client": ["mweb", "web_safari", "web"],
+                # Priority order:
+                # 1. mweb:       bgutil provides GVS PO tokens; HLS streams bypass SABR
+                # 2. android_vr: NO PO token required; NOT SABR-enforced; DASH available
+                # 3. tv:         NO PO token required; sometimes SABR "in some cases"
+                # 4. web:        bgutil provides GVS PO tokens; SABR-enforced (last resort)
+                #
+                # web_safari removed: SABR is now enforced for web_safari too (see #12482)
+                # android_vr is the key new addition — bypasses both PO token AND SABR
+                "player_client": ["mweb", "android_vr", "tv", "web"],
             },
             "youtubepot-bgutilhttp": {
                 "base_url": [BGUTIL_POT_SERVER_URL],
