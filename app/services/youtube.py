@@ -12,15 +12,30 @@ DENO_PATH = os.path.expanduser("~/.deno/bin")
 if os.path.isdir(DENO_PATH) and DENO_PATH not in os.environ.get("PATH", ""):
     os.environ["PATH"] = DENO_PATH + ":" + os.environ.get("PATH", "")
 
+# URL for the bgutil PO Token HTTP server sidecar.
+# Defaults to localhost for bare-metal / dev; overridden to the Docker service
+# name via the BGUTIL_POT_SERVER_URL env var in docker-compose.yml.
+BGUTIL_POT_SERVER_URL = os.environ.get("BGUTIL_POT_SERVER_URL", "http://127.0.0.1:4416")
+
 
 def _get_base_opts() -> dict:
     opts = {
         "quiet": False,
         "no_warnings": True,
-        # mweb uses a different API endpoint that often bypasses datacenter IP
-        # restrictions; android gives DASH adaptive streams; ios gives HLS;
-        # tv handles age-gated content; web as last resort.
-        # "extractor_args": {"youtube": {"player_client": ["mweb", "android", "ios", "tv", "web"]}}
+        # Use mweb client — recommended when pairing with a PO Token provider.
+        # mweb only requires a GVS PO Token (which bgutil supplies automatically)
+        # and avoids the datacenter-IP restrictions that hit the web/android clients.
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["mweb"],
+            },
+            # Tell the bgutil HTTP plugin where our sidecar server is.
+            # If BGUTIL_POT_SERVER_URL matches the plugin default (127.0.0.1:4416)
+            # this key is technically redundant but kept for explicitness.
+            "youtubepot-bgutilhttp": {
+                "base_url": [BGUTIL_POT_SERVER_URL],
+            },
+        },
     }
     if os.path.exists(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE

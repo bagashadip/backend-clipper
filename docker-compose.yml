@@ -16,6 +16,24 @@
 
 services:
 
+  # ── BgUtils POT Provider ──────────────────────────────────────────────────
+  # Generates YouTube Proof-of-Origin tokens automatically so yt-dlp can
+  # download from datacenter IPs without manual cookie rotation.
+  # Plugin docs: https://github.com/Brainicism/bgutil-ytdlp-pot-provider
+  bgutil-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: unless-stopped
+    # Port 4416 is exposed to other containers via the default docker network.
+    # No host-port mapping needed unless you want to test it from your host.
+    expose:
+      - "4416"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4416/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
   # ── PostgreSQL ────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
@@ -61,12 +79,15 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
+      BGUTIL_POT_SERVER_URL: http://bgutil-provider:4416
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      bgutil-provider:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -93,10 +114,13 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
+      BGUTIL_POT_SERVER_URL: http://bgutil-provider:4416
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      bgutil-provider:
         condition: service_healthy
     # Expose the NVIDIA GPU to the container for h264_nvenc
     deploy:
