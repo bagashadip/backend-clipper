@@ -22,18 +22,11 @@ def _get_base_opts() -> dict:
     opts = {
         "quiet": False,
         "no_warnings": True,
-        # mweb is the recommended client when paired with a PO Token provider:
-        # only needs a GVS PO Token (bgutil supplies it automatically).
-        # web is included as fallback because mweb does NOT serve audio-only
-        # DASH streams (formats 139/140) — those only come from the web client.
-        # bgutil will provide PO tokens for both clients automatically.
+        "verbose": True, # INI WAJIB ADA BUAT DEBUGGING TOKEN
         "extractor_args": {
             "youtube": {
                 "player_client": ["mweb", "web"],
             },
-            # Tell the bgutil HTTP plugin where our sidecar server is.
-            # If BGUTIL_POT_SERVER_URL matches the plugin default (127.0.0.1:4416)
-            # this key is technically redundant but kept for explicitness.
             "youtubepot-bgutilhttp": {
                 "base_url": [BGUTIL_POT_SERVER_URL],
             },
@@ -82,16 +75,12 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
 
     ydl_opts = _get_base_opts()
     ydl_opts.update({
-        # REQUIRED: without "format", yt-dlp has no selector and raises
-        # "Requested format is not available" on restricted IPs.
-        # Chain: prefer native m4a → any audio-only → muxed (FFmpegExtractAudio strips video)
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "format_sort": ["hasaud", "ext:m4a", "abr"],
-        # Do NOT restrict to android/ios: those clients require GVS PO Token
-        # (YouTube anti-bot), causing all formats to be skipped on GCP IPs.
-        # With valid cookies.txt, the default web client works and serves all
-        # DASH audio-only streams (formats 139/140). Without valid cookies,
-        # all clients are unreliable on datacenter IPs → refresh cookies.txt.
+        # Fleksibel: Cari m4a murni. Kalau gak ada, ambil best audio.
+        # Kalau best audio disembunyiin juga, ambil best (mp4 gabungan).
+        "format": "m4a/bestaudio/best",
+        
+        # HAPUS BARIS "format_sort" TOTAL DARI SINI
+        
         "outtmpl": output_template + ".%(ext)s",
         "extract_flat": False,
         "postprocessors": [{
