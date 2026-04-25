@@ -2,6 +2,7 @@ import os
 import logging
 import tempfile
 import yt_dlp
+from app.services.youtube import _get_base_opts
 
 logger = logging.getLogger(__name__)
 
@@ -110,21 +111,13 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
         raise ValueError(f"Failed to download audio: {e}")
 
 
-def download_video_segment(youtube_url: str, start_time: float, end_time: float, quality: str = "480p") -> str:
-    """Download only a specific segment of the video using yt-dlp --download-sections.
-
-    NOTE: download_ranges is currently DISABLED for diagnostic purposes.
-    Theory: FFmpeg on GCP fails to cut DASH streams mid-stream, causing yt-dlp
-    to silently fall back to a low-res muxed format. Without download_ranges,
-    yt-dlp downloads the full video at the correct resolution — MoviePy then
-    trims the segment. Confirm by checking the [yt-dlp] log lines for resolution.
-    """
+def download_video_segment(youtube_url: str, start_time: float, end_time: float, quality: str = "1080p") -> str:
+    """Download only a specific segment of the video using yt-dlp."""
     output_dir = tempfile.mkdtemp(prefix="clipper_segment_")
     output_path = os.path.join(output_dir, "segment.mp4")
 
-    # Map quality string → target height for format_sort res: hint
     QUALITY_HEIGHT = {
-        "best": None,  # no height preference, just take highest
+        "best": None,
         "480p": 480,
         "720p": 720,
         "1080p": 1080,
@@ -133,7 +126,13 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     }
     target_height = QUALITY_HEIGHT.get(quality)
 
-    fmt = "bestvideo+bestaudio/best"
+    # STRING DINAMIS: Kunci resolusinya langsung di tahap pencarian format,
+    # bukan cuma ngandelin format_sort. Ini menghemat bandwidth server lu.
+    if target_height:
+        fmt = f"bestvideo[height<={target_height}]+bestaudio/bestvideo[height<={target_height}]+18/best"
+    else:
+        fmt = "bestvideo+bestaudio/bestvideo+18/best"
+        
     fmt_sort = ["res:" + str(target_height)] if target_height else ["res:2160"]
 
     logger.info(
@@ -142,31 +141,7 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
         f"format_sort={fmt_sort}"
     )
 
-    # Pre-download: list all formats YouTube is offering from this IP.
-    _debug_opts = _get_base_opts()
-    _debug_opts["quiet"] = True
-    _debug_opts["no_warnings"] = True
-    
-    # ── BEDAH SESAR 1: Ganti klien ke TV untuk bypass SABR dan dapet 4K ──
-    # Kita pakai setdefault untuk jaga-jaga biar nggak KeyError, 
-    # tapi intinya ini nimpa array player_client TANPA menghapus PO Token.
-    _debug_opts.setdefault("extractor_args", {}).setdefault("youtube", {})["player_client"] = ["tv", "ios", "android"]
-
-    try:
-        with yt_dlp.YoutubeDL(_debug_opts) as _ydl:
-            _info = _ydl.extract_info(youtube_url, download=False)
-            if _info:
-                _fmts = [
-                    (f.get("format_id"), f.get("height"), (f.get("vcodec") or "")[:12], f.get("ext"))
-                    for f in (_info.get("formats") or [])
-                ]
-                _fmts.sort(key=lambda x: x[1] or 0, reverse=True)
-                logger.info(f"[yt-dlp] Formats available from this IP (top 15): {_fmts[:15]}")
-    except Exception as _e:
-        logger.warning(f"[yt-dlp] Format listing failed: {_e}")
-
     def _log_format(d: dict) -> None:
-        """Progress hook: log the actual format yt-dlp selected on first download start."""
         if d.get("status") != "downloading":
             return
         info = d.get("info_dict", {})
@@ -175,41 +150,16 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
         info["_format_logged"] = True
 
         fmt_id   = info.get("format_id", "?")
-        vcodec   = info.get("vcodec", "?")
-        acodec   = info.get("acodec", "?")
         height   = info.get("height", "?")
         width    = info.get("width", "?")
-        ext      = info.get("ext", "?")
-        filesize = info.get("filesize") or info.get("filesize_approx")
-        size_mb  = f"{filesize / 1024 / 1024:.1f} MB" if filesize else "unknown size"
-
-        logger.info(
-            f"[yt-dlp] Downloading format_id={fmt_id!r} | "
-            f"{width}x{height} | vcodec={vcodec} | acodec={acodec} | "
-            f"ext={ext} | {size_mb}"
-        )
+        logger.info(f"[yt-dlp] Downloading format_id={fmt_id!r} | {width}x{height}")
 
     ydl_opts = _get_base_opts()
     
-    # ── BEDAH SESAR 2: Terapkan klien TV ke proses download aslinya ──
-    ydl_opts.setdefault("extractor_args", {}).setdefault("youtube", {})["player_client"] = ["tv", "ios", "android"]
-
     ydl_opts.update({
         "format": fmt,
-        # res:N — prefer resolution closest to N (e.g. res:1080 picks 1080p,
-        # res:2160 picks the highest available resolution).
-        # NOTE: +res would be ASCENDING (lowest first) — do NOT use it.
         "format_sort": fmt_sort,
         "outtmpl": output_path,
-        # ── DIAGNOSTIC: download_ranges disabled ──────────────────────────
-        # download_ranges cuts the stream mid-download via FFmpeg. On GCP this
-        # appears to cause DASH segment fetch failures, making yt-dlp silently
-        # fall back to a low-res muxed format. Disabled until confirmed fixed.
-        # Once confirmed, re-enable and trim will happen server-side:
-        #   "download_ranges": yt_dlp.utils.download_range_func(
-        #       None, [(start_time, end_time)]
-        #   ),
-        # ──────────────────────────────────────────────────────────────────
         "force_keyframes_at_cuts": True,
         "merge_output_format": "mp4",
         "progress_hooks": [_log_format],
@@ -222,7 +172,6 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
         if os.path.exists(output_path):
             return output_path
 
-        # Check for merged output
         for f in os.listdir(output_dir):
             if f.endswith(".mp4"):
                 return os.path.join(output_dir, f)
