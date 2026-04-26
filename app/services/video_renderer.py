@@ -83,10 +83,6 @@ LANDSCAPE_QUALITY = {
     "1080p": {"width": 1920, "height": 1080, "bitrate": "10M"},
 }
 
-# Padding added to clip end_time so the cut feels natural
-# (speaker finishes breath / pitch drops before hard cut).
-CLIP_END_BUFFER = 0.8  # seconds
-
 # Source download quality needed to get enough pixels after 9:16 crop.
 # After cropping 16:9→9:16, crop_width = source_height * 9/16.
 # We need crop_width >= target vertical width, so download higher res.
@@ -241,26 +237,22 @@ def render_clip(
         else:
             source_quality = quality
 
-        # Add buffer so the cut ends naturally (breath / pitch drop)
-        end_time_final = end_time + CLIP_END_BUFFER
-
-        logger.info(f"Downloading full video then trimming {start_time:.1f}s - {end_time_final:.1f}s "
-                    f"(source={source_quality}, format={export_format}, crop={crop_x_percent:.0f}%, "
-                    f"buffer={CLIP_END_BUFFER}s)")
-        segment_path = download_video_segment(youtube_url, start_time, end_time_final, quality=source_quality)
+        logger.info(f"Downloading full video then trimming {start_time:.1f}s - {end_time:.1f}s "
+                    f"(source={source_quality}, format={export_format}, crop={crop_x_percent:.0f}%)")
+        segment_path = download_video_segment(youtube_url, start_time, end_time, quality=source_quality)
 
         video = VideoFileClip(segment_path)
 
         # Trim to the requested time window (download_ranges disabled on server,
         # so the full video is downloaded; we cut here instead)
         video_duration = video.duration
-        if video_duration > (end_time_final - start_time) + 5:
+        if video_duration > (end_time - start_time) + 5:
             # Full video downloaded — trim to the clip window
             logger.info(
                 f"Full video detected ({video_duration:.1f}s), "
-                f"trimming to [{start_time:.1f}s, {end_time_final:.1f}s]"
+                f"trimming to [{start_time:.1f}s, {end_time:.1f}s]"
             )
-            video = video.subclip(start_time, min(end_time_final, video_duration))
+            video = video.subclip(start_time, min(end_time, video_duration))
 
         # ── Step 2: Crop & resize ─────────────────────────────────────────
         if export_format == "9:16":
