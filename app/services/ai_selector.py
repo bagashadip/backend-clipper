@@ -293,7 +293,7 @@ def extract_and_filter_clips(
     if user_tier == "free":
         models_to_try = ["gemini-2.5-flash"]
     else:
-        models_to_try = ["gemini-2.5-pro", "gemini-2.5-flash"]
+        models_to_try = ["gemini-2.5-pro"]
     raw_clips: list[dict] | None = None
 
     for model_name in models_to_try:
