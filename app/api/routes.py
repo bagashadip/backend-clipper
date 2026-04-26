@@ -387,14 +387,9 @@ def get_clip_preview_url(
 
 
 @router.get("/clips/{clip_id}/thumbnail")
-def get_clip_thumbnail(clip_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def get_clip_thumbnail(clip_id: UUID, db: Session = Depends(get_db)):
     """Redirect to a presigned S3 URL for the clip thumbnail."""
-    clip = (
-        db.query(Clip)
-        .join(SourceVideo, Clip.video_id == SourceVideo.id)
-        .filter(Clip.id == clip_id, SourceVideo.user_id == user.id)
-        .first()
-    )
+    clip = db.query(Clip).filter(Clip.id == clip_id).first()
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
     if not clip.thumbnail_url:
