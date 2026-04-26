@@ -76,11 +76,11 @@ def process_url(
 
 
 @router.get("/videos/{video_id}", response_model=SourceVideoResponse)
-def get_video(video_id: UUID, db: Session = Depends(get_db)):
+def get_video(video_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     video = (
         db.query(SourceVideo)
         .options(joinedload(SourceVideo.clips).joinedload(Clip.subtitles))
-        .filter(SourceVideo.id == video_id)
+        .filter(SourceVideo.id == video_id, SourceVideo.user_id == user.id)
         .first()
     )
     if not video:
@@ -101,11 +101,12 @@ def list_videos(db: Session = Depends(get_db), user: User = Depends(get_current_
 
 
 @router.get("/clips/{clip_id}", response_model=ClipResponse)
-def get_clip(clip_id: UUID, db: Session = Depends(get_db)):
+def get_clip(clip_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     clip = (
         db.query(Clip)
         .options(joinedload(Clip.subtitles))
-        .filter(Clip.id == clip_id)
+        .join(SourceVideo, Clip.video_id == SourceVideo.id)
+        .filter(Clip.id == clip_id, SourceVideo.user_id == user.id)
         .first()
     )
     if not clip:
@@ -120,7 +121,12 @@ def update_clip(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    clip = db.query(Clip).filter(Clip.id == clip_id).first()
+    clip = (
+        db.query(Clip)
+        .join(SourceVideo, Clip.video_id == SourceVideo.id)
+        .filter(Clip.id == clip_id, SourceVideo.user_id == user.id)
+        .first()
+    )
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
 
@@ -172,7 +178,12 @@ def generate_clip_proxy(
     if user.subscription_tier == "free":
         raise HTTPException(status_code=403, detail="Proxy editing requires a Pro subscription.")
 
-    clip = db.query(Clip).filter(Clip.id == clip_id).first()
+    clip = (
+        db.query(Clip)
+        .join(SourceVideo, Clip.video_id == SourceVideo.id)
+        .filter(Clip.id == clip_id, SourceVideo.user_id == user.id)
+        .first()
+    )
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
 
@@ -219,8 +230,14 @@ def generate_clip_proxy(
 
 
 @router.patch("/subtitles/{subtitle_id}", response_model=dict)
-def update_subtitle(subtitle_id: UUID, request: UpdateSubtitleRequest, db: Session = Depends(get_db)):
-    subtitle = db.query(Subtitle).filter(Subtitle.id == subtitle_id).first()
+def update_subtitle(subtitle_id: UUID, request: UpdateSubtitleRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    subtitle = (
+        db.query(Subtitle)
+        .join(Clip, Subtitle.clip_id == Clip.id)
+        .join(SourceVideo, Clip.video_id == SourceVideo.id)
+        .filter(Subtitle.id == subtitle_id, SourceVideo.user_id == user.id)
+        .first()
+    )
     if not subtitle:
         raise HTTPException(status_code=404, detail="Subtitle not found")
 
@@ -236,7 +253,12 @@ def create_subtitle(
     user: User = Depends(get_current_user),
 ):
     """Add a new subtitle word at a specific timestamp."""
-    clip = db.query(Clip).filter(Clip.id == request.clip_id).first()
+    clip = (
+        db.query(Clip)
+        .join(SourceVideo, Clip.video_id == SourceVideo.id)
+        .filter(Clip.id == request.clip_id, SourceVideo.user_id == user.id)
+        .first()
+    )
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
 
@@ -279,7 +301,13 @@ def delete_subtitle(
     user: User = Depends(get_current_user),
 ):
     """Delete a subtitle word."""
-    subtitle = db.query(Subtitle).filter(Subtitle.id == subtitle_id).first()
+    subtitle = (
+        db.query(Subtitle)
+        .join(Clip, Subtitle.clip_id == Clip.id)
+        .join(SourceVideo, Clip.video_id == SourceVideo.id)
+        .filter(Subtitle.id == subtitle_id, SourceVideo.user_id == user.id)
+        .first()
+    )
     if not subtitle:
         raise HTTPException(status_code=404, detail="Subtitle not found")
 
@@ -307,7 +335,12 @@ def get_clip_download_url(
     user: User = Depends(get_current_user),
 ):
     """Return a presigned S3 URL for downloading/streaming the clip."""
-    clip = db.query(Clip).filter(Clip.id == clip_id).first()
+    clip = (
+        db.query(Clip)
+        .join(SourceVideo, Clip.video_id == SourceVideo.id)
+        .filter(Clip.id == clip_id, SourceVideo.user_id == user.id)
+        .first()
+    )
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
     if not clip.storage_url:
@@ -325,7 +358,12 @@ def get_clip_preview_url(
     user: User = Depends(get_current_user),
 ):
     """Return a presigned S3 URL for the lightweight preview version (editor playback)."""
-    clip = db.query(Clip).filter(Clip.id == clip_id).first()
+    clip = (
+        db.query(Clip)
+        .join(SourceVideo, Clip.video_id == SourceVideo.id)
+        .filter(Clip.id == clip_id, SourceVideo.user_id == user.id)
+        .first()
+    )
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
     if not clip.storage_url:
@@ -349,9 +387,14 @@ def get_clip_preview_url(
 
 
 @router.get("/clips/{clip_id}/thumbnail")
-def get_clip_thumbnail(clip_id: UUID, db: Session = Depends(get_db)):
+def get_clip_thumbnail(clip_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Redirect to a presigned S3 URL for the clip thumbnail."""
-    clip = db.query(Clip).filter(Clip.id == clip_id).first()
+    clip = (
+        db.query(Clip)
+        .join(SourceVideo, Clip.video_id == SourceVideo.id)
+        .filter(Clip.id == clip_id, SourceVideo.user_id == user.id)
+        .first()
+    )
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
     if not clip.thumbnail_url:
