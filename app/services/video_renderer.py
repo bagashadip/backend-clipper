@@ -229,11 +229,14 @@ def render_clip(
     try:
         # ── Step 1: Download source segment ───────────────────────────────
         if export_format == "9:16":
-            # Always download the best available source for 9:16 crops.
-            # After crop, auto-cap (Step 2) determines the actual achievable quality.
-            # Using a fixed height mapping risks falling back to muxed 720p when the
-            # target height is not available (e.g. requesting 4K from a 1080p video).
-            source_quality = "best"
+            # For 9:16 crops, request a higher source quality than the target:
+            #   480p vertical needs 1080p source  (crop_w = 1080*9/16 = 607 ≥ 480)
+            #   720p vertical needs 1440p source  (crop_w = 1440*9/16 = 810 ≥ 720)
+            #  1080p vertical needs 2160p source  (crop_w = 2160*9/16 = 1215 ≥ 1080)
+            # If the source doesn't have the higher resolution, yt-dlp falls back
+            # to the best available. The auto-cap in Step 2 will then correctly
+            # limit the output to what the source can actually produce.
+            source_quality = SOURCE_QUALITY_FOR_VERTICAL.get(quality, "best")
         else:
             source_quality = quality
 
