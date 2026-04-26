@@ -290,7 +290,7 @@ def extract_and_filter_clips(
 
     logger.info(f"Sending transcript to Gemini (tier={user_tier}, duration={min_dur}-{max_dur}s)")
 
-    models_to_try = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    models_to_try = ["gemini-1.5-pro", "gemini-2.5-flash"]
     raw_clips: list[dict] | None = None
 
     for model_name in models_to_try:
