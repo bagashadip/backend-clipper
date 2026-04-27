@@ -38,7 +38,8 @@ FROM base AS deps
 
 WORKDIR /build
 COPY requirements.txt .
-RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
+RUN python3.11 -m pip install --no-cache-dir -r requirements.txt \
+    && python3.11 -m pip install --no-cache-dir -U yt-dlp
 
 # ── Final image ────────────────────────────────────────────────────────────────
 FROM base AS final
