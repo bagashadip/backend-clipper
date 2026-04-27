@@ -34,7 +34,7 @@ def _get_base_opts() -> dict:
                 #
                 # web_safari removed: SABR is now enforced for web_safari too (see #12482)
                 # android_vr is the key new addition — bypasses both PO token AND SABR
-                "player_client": ["mweb", "android_vr", "tv", "web"],
+                "player_client": ["mweb", "web_embedded", "android_vr", "tv", "web"],
             },
             "youtubepot-bgutilhttp": {
                 "base_url": [BGUTIL_POT_SERVER_URL],
@@ -43,14 +43,13 @@ def _get_base_opts() -> dict:
     }
     if os.path.exists(COOKIES_FILE):
         age_days = (time.time() - os.path.getmtime(COOKIES_FILE)) / 86400
-        if age_days <= 7:
+        if age_days <= 3:
             opts["cookiefile"] = COOKIES_FILE
             logger.info(f"Using cookies from {COOKIES_FILE} (age: {age_days:.1f}d)")
         else:
             logger.warning(
-                f"Skipping stale cookies.txt (age: {age_days:.1f}d > 7d). "
-                "Expired cookies cause LOGIN_REQUIRED for all clients. "
-                "Replace cookies.txt with a fresh export."
+                f"Skipping stale cookies.txt (age: {age_days:.1f}d > 3d). "
+                "Stale cookies cause LOGIN_REQUIRED. Replace with a fresh export."
             )
     return opts
 
@@ -209,6 +208,14 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
         raise FileNotFoundError("Segment file not found after download")
 
     except yt_dlp.utils.DownloadError as e:
+        err_str = str(e)
+        if "LOGIN_REQUIRED" in err_str or "Sign in to confirm" in err_str:
+            raise ValueError(
+                "YouTube LOGIN_REQUIRED: all player clients blocked on this IP. "
+                "Fix: (1) ensure bgutil-provider container is running and healthy, "
+                "(2) update cookies.txt with a fresh browser export (max 3 days old), "
+                "(3) run: docker compose exec worker pip install -U yt-dlp"
+            )
         raise ValueError(f"Failed to download video segment: {e}")
 
 
