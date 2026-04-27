@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 from pydantic import BaseModel, Field, field_validator
 from google import genai
@@ -293,7 +294,7 @@ def extract_and_filter_clips(
     if user_tier == "free":
         models_to_try = ["gemini-2.5-flash"]
     else:
-        models_to_try = ["gemini-2.5-pro"]
+        models_to_try = ["gemini-2.5-pro", "gemini-2.5-flash"]
     raw_clips: list[dict] | None = None
 
     for model_name in models_to_try:
@@ -310,12 +311,30 @@ def extract_and_filter_clips(
                 if response.parsed:
                     raw_clips = response.parsed
                 elif response.text:
-                    raw_clips = json.loads(response.text)
+                    text = response.text.strip()
+                    # Strip accidental markdown code fences
+                    text = re.sub(r"^```(?:json)?\s*", "", text)
+                    text = re.sub(r"\s*```$", "", text).strip()
+                    raw_clips = json.loads(text)
 
                 if raw_clips:
                     logger.info(f"Got {len(raw_clips)} raw clips from {model_name}")
                     break
 
+            except json.JSONDecodeError as e:
+                if attempt < 2:
+                    wait = 2 ** attempt * 5
+                    logger.warning(
+                        f"{model_name} JSON parse error (attempt {attempt+1}/3), retrying in {wait}s: {e}\n"
+                        f"Raw text: {getattr(response, 'text', '<no text>')[:500]}"
+                    )
+                    time.sleep(wait)
+                else:
+                    logger.warning(
+                        f"{model_name} failed (JSON): {e}\n"
+                        f"Raw text: {getattr(response, 'text', '<no text>')[:500]}"
+                    )
+                    break
             except Exception as e:
                 err_str = str(e)
                 if ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str
