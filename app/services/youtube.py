@@ -43,13 +43,13 @@ def _get_base_opts() -> dict:
     }
     if os.path.exists(COOKIES_FILE):
         age_days = (time.time() - os.path.getmtime(COOKIES_FILE)) / 86400
-        if age_days <= 3:
+        if age_days <= 7:
             opts["cookiefile"] = COOKIES_FILE
             logger.info(f"Using cookies from {COOKIES_FILE} (age: {age_days:.1f}d)")
         else:
             logger.warning(
-                f"Skipping stale cookies.txt (age: {age_days:.1f}d > 3d). "
-                "Stale cookies cause LOGIN_REQUIRED. Replace with a fresh export."
+                f"Skipping stale cookies.txt (age: {age_days:.1f}d > 7d). "
+                "Replace with a fresh export."
             )
     return opts
 

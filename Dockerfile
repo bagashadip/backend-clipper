@@ -26,6 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu-core \
         fonts-dejavu \
         nodejs \
+        npm \
+    && ln -sf /usr/bin/nodejs /usr/local/bin/node \
     && rm -rf /var/lib/apt/lists/*
 
 # Make python3.11 / pip the default
