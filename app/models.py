@@ -34,6 +34,7 @@ class SourceVideo(Base):
     youtube_id = Column(String(20), nullable=False)
     title = Column(String(500))
     duration_seconds = Column(Float)
+    max_source_height = Column(Integer)
     status = Column(
         SAEnum("pending", "downloading", "transcribing", "analyzing", "rendering", "completed", "failed",
                name="video_status"),

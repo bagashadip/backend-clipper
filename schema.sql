@@ -24,6 +24,7 @@ CREATE TABLE source_videos (
     youtube_id VARCHAR(20) NOT NULL,
     title VARCHAR(500),
     duration_seconds FLOAT,
+    max_source_height INTEGER,
     status video_status NOT NULL DEFAULT 'pending',
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

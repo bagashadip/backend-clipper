@@ -80,6 +80,7 @@ class SourceVideoResponse(BaseModel):
     youtube_id: str
     title: Optional[str] = None
     duration_seconds: Optional[float] = None
+    max_source_height: Optional[int] = None
     status: str
     error_message: Optional[str] = None
     created_at: datetime

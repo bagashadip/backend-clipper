@@ -29,6 +29,7 @@ def process_video_task(self, video_id: str):
         metadata = extract_metadata(video.youtube_url)
         video.title = metadata.get("title")
         video.duration_seconds = metadata.get("duration")
+        video.max_source_height = metadata.get("max_source_height")
         db.commit()
 
         audio_path = download_audio(video.youtube_url, video.youtube_id)

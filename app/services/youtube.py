@@ -74,11 +74,20 @@ def extract_metadata(youtube_url: str) -> dict:
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(youtube_url, download=False)
+
+            # Find the highest available video height across all formats
+            max_height: int | None = None
+            for fmt in info.get("formats", []):
+                h = fmt.get("height")
+                if h and isinstance(h, (int, float)) and int(h) > (max_height or 0):
+                    max_height = int(h)
+
             return {
                 "title": info.get("title", ""),
                 "duration": info.get("duration", 0),
                 "thumbnail": info.get("thumbnail", ""),
                 "uploader": info.get("uploader", ""),
+                "max_source_height": max_height,
             }
     except yt_dlp.utils.DownloadError as e:
         raise ValueError(f"Invalid YouTube URL or video unavailable: {e}")
