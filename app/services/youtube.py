@@ -66,7 +66,6 @@ def _get_base_opts() -> dict:
         "quiet": False,
         "no_warnings": True,
         "verbose": True, # INI WAJIB ADA BUAT DEBUGGING TOKEN
-        "username": "oauth2"
         "extractor_args": {
             "youtube": {
                 # Priority order:
