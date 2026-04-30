@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import tempfile
+import re
 import yt_dlp
 
 logger = logging.getLogger(__name__)
@@ -19,11 +20,53 @@ if os.path.isdir(DENO_PATH) and DENO_PATH not in os.environ.get("PATH", ""):
 BGUTIL_POT_SERVER_URL = os.environ.get("BGUTIL_POT_SERVER_URL", "http://127.0.0.1:4416")
 
 
+def get_youtube_video_id(url: str) -> str:
+    """
+    Extract the 11-character YouTube Video ID from any YouTube URL format.
+    
+    Supports:
+    - Standard: https://www.youtube.com/watch?v=VIDEO_ID
+    - Shorts: https://www.youtube.com/shorts/VIDEO_ID
+    - Mobile/Short: https://youtu.be/VIDEO_ID
+    - Embed: https://www.youtube.com/embed/VIDEO_ID
+    - With query params: ?v=VIDEO_ID&t=123&feature=share
+    
+    Args:
+        url: YouTube URL in any format
+        
+    Returns:
+        The 11-character video ID
+        
+    Raises:
+        ValueError: If the video ID cannot be extracted
+    """
+    # Comprehensive regex patterns for all YouTube URL formats
+    patterns = [
+        r'(?:v=|/)([0-9A-Za-z_-]{11}).*',           # Standard watch, youtu.be
+        r'(?:embed/)([0-9A-Za-z_-]{11})',           # Embed URLs
+        r'(?:shorts/)([0-9A-Za-z_-]{11})',          # Shorts URLs
+        r'^([0-9A-Za-z_-]{11})$',                   # Just the ID itself
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            video_id = match.group(1)
+            # Validate it's exactly 11 characters (YouTube standard)
+            if len(video_id) == 11:
+                logger.info(f"Extracted YouTube ID: {video_id} from URL: {url}")
+                return video_id
+    
+    raise ValueError(f"Could not extract valid YouTube video ID from URL: {url}")
+
+
+
 def _get_base_opts() -> dict:
     opts = {
         "quiet": False,
         "no_warnings": True,
         "verbose": True, # INI WAJIB ADA BUAT DEBUGGING TOKEN
+        "username": "oauth2"
         "extractor_args": {
             "youtube": {
                 # Priority order:
@@ -136,7 +179,12 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
 
 
 def download_video_segment(youtube_url: str, start_time: float, end_time: float, quality: str = "1080p") -> str:
-    """Download only a specific segment of the video using yt-dlp."""
+    """Download only a specific segment of the video using yt-dlp.
+    
+    For qualities 1440p and 2160p, we prefer the exact resolution or best available
+    (no upper limit) to ensure we get the highest quality source for vertical crops.
+    For standard qualities (480p, 720p, 1080p), we cap at the requested height.
+    """
     output_dir = tempfile.mkdtemp(prefix="clipper_segment_")
     output_path = os.path.join(output_dir, "segment.mp4")
 
@@ -151,10 +199,14 @@ def download_video_segment(youtube_url: str, start_time: float, end_time: float,
     target_height = QUALITY_HEIGHT.get(quality)
 
     if target_height:
-        # 1st: separate DASH bestvideo+bestaudio (best quality, needs two streams)
-        # 2nd: best combined format (HLS from mweb/web_safari) at or below target height
-        # 3rd: absolute best combined format regardless of height (last resort)
-        fmt = f"bestvideo[height<={target_height}]+bestaudio/best[height<={target_height}]/best"
+        # For high-res requests (1440p, 2160p), prefer exact match or best available
+        # This ensures we get the highest quality source for 9:16 vertical crops
+        if target_height >= 1440:
+            # Try exact height first, then best available (no upper limit)
+            fmt = f"bestvideo[height={target_height}]+bestaudio/bestvideo[height>={target_height}]+bestaudio/bestvideo+bestaudio/best"
+        else:
+            # For standard qualities, cap at requested height to avoid unnecessary downloads
+            fmt = f"bestvideo[height<={target_height}]+bestaudio/best[height<={target_height}]/best"
     else:
         fmt = "bestvideo+bestaudio/best"
         
@@ -224,3 +276,81 @@ def _seconds_to_timestamp(seconds: float) -> str:
     m = int((seconds % 3600) // 60)
     s = seconds % 60
     return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+
+def download_full_video(youtube_url: str, youtube_id: str, quality: str = "best") -> str:
+    """
+    Download the full video (not a segment) for caching purposes.
+    
+    This is used to cache the source video in S3 for future clip rendering.
+    Downloads the highest quality available up to the requested quality.
+    
+    Args:
+        youtube_url: The YouTube URL
+        youtube_id: The YouTube video ID (used for filename)
+        quality: Target quality (best, 2160p, 1440p, 1080p, 720p, 480p)
+        
+    Returns:
+        Path to the downloaded video file
+    """
+    output_dir = tempfile.mkdtemp(prefix="clipper_full_")
+    output_path = os.path.join(output_dir, f"{youtube_id}.mp4")
+    
+    QUALITY_HEIGHT = {
+        "best": None,
+        "480p": 480,
+        "720p": 720,
+        "1080p": 1080,
+        "1440p": 1440,
+        "2160p": 2160,
+    }
+    target_height = QUALITY_HEIGHT.get(quality)
+    
+    if target_height and target_height >= 1440:
+        # For high-res, prefer exact or best available
+        fmt = f"bestvideo[height={target_height}]+bestaudio/bestvideo[height>={target_height}]+bestaudio/bestvideo+bestaudio/best"
+    elif target_height:
+        # For standard qualities, cap at requested height
+        fmt = f"bestvideo[height<={target_height}]+bestaudio/best[height<={target_height}]/best"
+    else:
+        # Best available
+        fmt = "bestvideo+bestaudio/best"
+    
+    logger.info(f"[Cache] Downloading full video: {youtube_id} at quality={quality}")
+    
+    ydl_opts = _get_base_opts()
+    ydl_opts.update({
+        "format": fmt,
+        "outtmpl": output_path,
+        "merge_output_format": "mp4",
+    })
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([youtube_url])
+        
+        if os.path.exists(output_path):
+            file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+            logger.info(f"[Cache] Downloaded full video: {output_path} ({file_size_mb:.1f} MB)")
+            return output_path
+        
+        # Fallback: find any video file in the directory
+        for f in os.listdir(output_dir):
+            if f.endswith(".mp4"):
+                full_path = os.path.join(output_dir, f)
+                logger.info(f"[Cache] Found video file: {full_path}")
+                return full_path
+        
+        raise FileNotFoundError(f"Video file not found after download in {output_dir}")
+    
+    except yt_dlp.utils.DownloadError as e:
+        err_str = str(e)
+        if "LOGIN_REQUIRED" in err_str or "Sign in to confirm" in err_str:
+            raise ValueError(
+                "YouTube LOGIN_REQUIRED: all player clients blocked on this IP. "
+                "Fix: (1) ensure bgutil-provider container is running and healthy, "
+                "(2) update cookies.txt with a fresh browser export (max 3 days old), "
+                "(3) run: docker compose exec worker pip install -U yt-dlp"
+            )
+        raise ValueError(f"Failed to download full video: {e}")
+

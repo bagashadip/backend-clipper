@@ -212,14 +212,26 @@ def render_clip(
     quality: str = "480p",
     export_format: str = "9:16",
     crop_x_percent: float = 50.0,
+    cached_video_path: str | None = None,
 ) -> tuple[str, str]:
     """
     Render a clip with burned-in captions.
-
+    
     CAPTION STYLE ROUTING:
       - "classic" / "hormozi": Legacy Pillow frame-by-frame text overlay
       - "hormozi_dynamic": ASS subtitle pipeline (per-word karaoke highlighting)
       - "none": No captions, single-pass export
+    
+    Args:
+        youtube_url: YouTube URL (used if cached_video_path is None)
+        start_time: Start time in seconds
+        end_time: End time in seconds
+        word_timestamps: List of word-level timestamps for captions
+        caption_style: Caption style to use
+        quality: Target output quality
+        export_format: Output format (9:16 or 16:9)
+        crop_x_percent: Horizontal crop position for 9:16
+        cached_video_path: Optional S3 URL or local path to cached source video
 
     Returns:
         (output_path, effective_quality) -- effective_quality may differ from
@@ -227,35 +239,51 @@ def render_clip(
     """
     segment_path = None
     try:
-        # ── Step 1: Download source segment ───────────────────────────────
-        if export_format == "9:16":
-            # For 9:16 crops, request a higher source quality than the target:
-            #   480p vertical needs 1080p source  (crop_w = 1080*9/16 = 607 ≥ 480)
-            #   720p vertical needs 1440p source  (crop_w = 1440*9/16 = 810 ≥ 720)
-            #  1080p vertical needs 2160p source  (crop_w = 2160*9/16 = 1215 ≥ 1080)
-            # If the source doesn't have the higher resolution, yt-dlp falls back
-            # to the best available. The auto-cap in Step 2 will then correctly
-            # limit the output to what the source can actually produce.
-            source_quality = SOURCE_QUALITY_FOR_VERTICAL.get(quality, "best")
+        # ── Step 1: Get source video (from cache or download) ────────────
+        if cached_video_path:
+            # Use cached video (S3 URL or local path)
+            logger.info(f"Using cached video source: {cached_video_path}")
+            
+            # Check if it's an S3 URL or local path
+            if cached_video_path.startswith("http://") or cached_video_path.startswith("https://"):
+                # S3 URL - use directly with FFmpeg (network streaming)
+                logger.info(f"Streaming from S3: {cached_video_path}")
+                segment_path = cached_video_path
+                use_network_stream = True
+            else:
+                # Local file path
+                segment_path = cached_video_path
+                use_network_stream = False
         else:
-            source_quality = quality
-
-        logger.info(f"Downloading full video then trimming {start_time:.1f}s - {end_time:.1f}s "
-                    f"(source={source_quality}, format={export_format}, crop={crop_x_percent:.0f}%)")
-        segment_path = download_video_segment(youtube_url, start_time, end_time, quality=source_quality)
-
-        video = VideoFileClip(segment_path)
-
-        # Trim to the requested time window (download_ranges disabled on server,
-        # so the full video is downloaded; we cut here instead)
-        video_duration = video.duration
-        if video_duration > (end_time - start_time) + 5:
-            # Full video downloaded — trim to the clip window
-            logger.info(
-                f"Full video detected ({video_duration:.1f}s), "
-                f"trimming to [{start_time:.1f}s, {end_time:.1f}s]"
-            )
-            video = video.subclip(start_time, min(end_time, video_duration))
+            # Download from YouTube
+            if export_format == "9:16":
+                source_quality = SOURCE_QUALITY_FOR_VERTICAL.get(quality, "best")
+            else:
+                source_quality = quality
+            
+            logger.info(f"Downloading from YouTube (source={source_quality})")
+            segment_path = download_video_segment(youtube_url, start_time, end_time, quality=source_quality)
+            use_network_stream = False
+        
+        # ── Step 2: Load video and trim if needed ─────────────────────────
+        if use_network_stream:
+            # For S3 URLs, we need to trim using subclip since we have the full video
+            video = VideoFileClip(segment_path)
+            video_duration = video.duration
+            
+            # Trim to the requested time window
+            if video_duration > (end_time - start_time) + 5:
+                logger.info(f"Trimming cached video from {start_time:.1f}s to {end_time:.1f}s")
+                video = video.subclip(start_time, min(end_time, video_duration))
+        else:
+            # For downloaded segments, load directly
+            video = VideoFileClip(segment_path)
+            video_duration = video.duration
+            
+            # If full video was downloaded, trim to clip window
+            if video_duration > (end_time - start_time) + 5:
+                logger.info(f"Trimming to [{start_time:.1f}s, {end_time:.1f}s]")
+                video = video.subclip(start_time, min(end_time, video_duration))
 
         # ── Step 2: Crop & resize ─────────────────────────────────────────
         if export_format == "9:16":
@@ -404,7 +432,8 @@ def render_clip(
         return output_path, quality
 
     finally:
-        if segment_path and os.path.exists(segment_path):
+        # Only cleanup if it's a local file (not an S3 URL)
+        if segment_path and os.path.exists(segment_path) if isinstance(segment_path, str) and not segment_path.startswith("http") else False:
             try:
                 os.remove(segment_path)
                 os.rmdir(os.path.dirname(segment_path))

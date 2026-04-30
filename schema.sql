@@ -25,6 +25,7 @@ CREATE TABLE source_videos (
     title VARCHAR(500),
     duration_seconds FLOAT,
     max_source_height INTEGER,
+    storage_url TEXT,
     status video_status NOT NULL DEFAULT 'pending',
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -62,6 +63,7 @@ CREATE TABLE subtitles (
 
 CREATE INDEX idx_source_videos_user_id ON source_videos(user_id);
 CREATE INDEX idx_source_videos_status ON source_videos(status);
+CREATE INDEX idx_source_videos_youtube_id ON source_videos(youtube_id);
 CREATE INDEX idx_clips_video_id ON clips(video_id);
 CREATE INDEX idx_subtitles_clip_id ON subtitles(clip_id);
 CREATE INDEX idx_subtitles_sequence ON subtitles(clip_id, sequence_index);

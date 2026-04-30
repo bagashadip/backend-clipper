@@ -2,13 +2,89 @@ import logging
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.models import SourceVideo, Clip, Subtitle, User
-from app.services.youtube import download_audio, extract_metadata
+from app.services.youtube import download_audio, extract_metadata, get_youtube_video_id, download_full_video
 from app.services.transcription import transcribe_audio
 from app.services.ai_selector import select_viral_clips, format_whisper_to_text
 from app.services.video_renderer import render_clip, generate_preview_from_clip, generate_thumbnail
-from app.services.storage import upload_to_s3
+from app.services.storage import upload_to_s3, check_s3_object_exists, get_s3_url
 
 logger = logging.getLogger(__name__)
+
+
+def get_or_cache_source_video(youtube_url: str, youtube_id: str, db) -> tuple[str | None, bool]:
+    """
+    Check if source video is cached in S3, or download and cache it.
+    
+    Returns:
+        (video_path_or_url, is_cached) tuple where:
+        - video_path_or_url: S3 URL if cached, None if needs download
+        - is_cached: True if using cached version, False otherwise
+    """
+    # Step 1: Check database for any completed video with this youtube_id
+    cached_video = (
+        db.query(SourceVideo)
+        .filter(
+            SourceVideo.youtube_id == youtube_id,
+            SourceVideo.status == "completed",
+            SourceVideo.storage_url.isnot(None)
+        )
+        .first()
+    )
+    
+    if cached_video and cached_video.storage_url:
+        # Step 2: Verify the S3 file still exists (7-day lifecycle may have deleted it)
+        s3_key = f"source_videos/{youtube_id}.mp4"
+        if check_s3_object_exists(s3_key):
+            logger.info(f"[Cache HIT] Using cached source video for {youtube_id} from S3")
+            return cached_video.storage_url, True
+        else:
+            logger.warning(f"[Cache EXPIRED] S3 file deleted by lifecycle policy for {youtube_id}")
+            # Clear the storage_url since the file no longer exists
+            cached_video.storage_url = None
+            db.commit()
+    
+    logger.info(f"[Cache MISS] Need to download source video for {youtube_id}")
+    return None, False
+
+
+def cache_source_video_to_s3(youtube_url: str, youtube_id: str, quality: str = "best") -> str | None:
+    """
+    Download full video and upload to S3 for caching.
+    
+    Returns:
+        S3 URL if successful, None if caching failed (non-fatal)
+    """
+    local_video_path = None
+    try:
+        # Download full video
+        logger.info(f"[Cache] Downloading full video {youtube_id} for caching")
+        local_video_path = download_full_video(youtube_url, youtube_id, quality=quality)
+        
+        # Upload to S3 with standardized key
+        s3_key = f"source_videos/{youtube_id}.mp4"
+        s3_url = upload_to_s3(local_video_path, s3_key)
+        
+        logger.info(f"[Cache] Successfully cached source video to S3: {s3_url}")
+        return s3_url
+        
+    except Exception as e:
+        logger.error(f"[Cache] Failed to cache source video {youtube_id}: {e}")
+        # Non-fatal: return None and continue with normal processing
+        return None
+        
+    finally:
+        # Cleanup local file
+        if local_video_path:
+            import os
+            try:
+                os.remove(local_video_path)
+                parent_dir = os.path.dirname(local_video_path)
+                if parent_dir and os.path.exists(parent_dir):
+                    os.rmdir(parent_dir)
+                logger.info(f"[Cache] Cleaned up local video file: {local_video_path}")
+            except OSError as e:
+                logger.warning(f"[Cache] Failed to cleanup {local_video_path}: {e}")
+
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=30)
@@ -22,16 +98,54 @@ def process_video_task(self, video_id: str):
             logger.error(f"Video {video_id} not found")
             return
 
-        # Step 1: Download audio
+        # Step 0: Extract and normalize YouTube ID
+        youtube_id = get_youtube_video_id(video.youtube_url)
+        video.youtube_id = youtube_id
+        db.commit()
+
+        # Step 1: Check cache and download if needed
         video.status = "downloading"
         db.commit()
 
+        # Extract metadata first
         metadata = extract_metadata(video.youtube_url)
         video.title = metadata.get("title")
         video.duration_seconds = metadata.get("duration")
         video.max_source_height = metadata.get("max_source_height")
         db.commit()
 
+        # Check if source video is cached in S3
+        cached_video_url, is_cached = get_or_cache_source_video(
+            video.youtube_url, 
+            youtube_id, 
+            db
+        )
+        
+        if not is_cached:
+            # Cache miss - download and cache the source video
+            # Determine quality based on max_source_height for optimal caching
+            if video.max_source_height and video.max_source_height >= 2160:
+                cache_quality = "2160p"
+            elif video.max_source_height and video.max_source_height >= 1440:
+                cache_quality = "1440p"
+            elif video.max_source_height and video.max_source_height >= 1080:
+                cache_quality = "1080p"
+            else:
+                cache_quality = "best"
+            
+            cached_video_url = cache_source_video_to_s3(
+                video.youtube_url,
+                youtube_id,
+                quality=cache_quality
+            )
+            
+            # Update database with cached URL (even if None, we tried)
+            if cached_video_url:
+                video.storage_url = cached_video_url
+                db.commit()
+                logger.info(f"[Cache] Stored S3 URL in database: {cached_video_url}")
+
+        # Download audio for transcription (always needed, not cached)
         audio_path = download_audio(video.youtube_url, video.youtube_id)
 
         # Step 2: Transcription
@@ -110,8 +224,8 @@ def process_video_task(self, video_id: str):
 
             db.commit()
 
-            # Render each clip
-            render_clip_task.delay(str(clip.id))
+            # Render each clip (pass cached video URL if available)
+            render_clip_task.delay(str(clip.id), cached_video_url)
 
         # --- DEDUCT QUOTA ON SUCCESS ---
         user = db.query(User).filter(User.id == video.user_id).with_for_update().first()
@@ -146,7 +260,7 @@ def process_video_task(self, video_id: str):
 
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=30)
-def render_clip_task(self, clip_id: str):
+def render_clip_task(self, clip_id: str, cached_video_url: str | None = None):
     import os
     db = SessionLocal()
 
@@ -174,6 +288,24 @@ def render_clip_task(self, clip_id: str):
             for s in subtitles
         ]
 
+        # Use cached video URL if available, otherwise fall back to YouTube URL
+        if cached_video_url:
+            logger.info(f"[Cache] Rendering clip {clip_id} using cached source: {cached_video_url}")
+        else:
+            # Check if the source video has a cached URL in the database
+            if video.storage_url:
+                # Verify it still exists in S3
+                youtube_id = get_youtube_video_id(video.youtube_url)
+                s3_key = f"source_videos/{youtube_id}.mp4"
+                if check_s3_object_exists(s3_key):
+                    cached_video_url = video.storage_url
+                    logger.info(f"[Cache] Found cached source in DB: {cached_video_url}")
+                else:
+                    logger.warning(f"[Cache] Cached source expired, will download from YouTube")
+            
+            if not cached_video_url:
+                logger.info(f"[Cache MISS] Rendering clip {clip_id} by downloading from YouTube")
+
         # Render the clip
         output_path, effective_quality = render_clip(
             youtube_url=video.youtube_url,
@@ -184,6 +316,7 @@ def render_clip_task(self, clip_id: str):
             quality=clip.quality or "480p",
             export_format=clip.export_format or "9:16",
             crop_x_percent=clip.crop_x_percent if clip.crop_x_percent is not None else 50.0,
+            cached_video_path=cached_video_url,
         )
 
         # Upload to S3

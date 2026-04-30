@@ -35,6 +35,7 @@ class SourceVideo(Base):
     title = Column(String(500))
     duration_seconds = Column(Float)
     max_source_height = Column(Integer)
+    storage_url = Column(Text)  # S3 URL for cached source video
     status = Column(
         SAEnum("pending", "downloading", "transcribing", "analyzing", "rendering", "completed", "failed",
                name="video_status"),
@@ -50,6 +51,7 @@ class SourceVideo(Base):
     __table_args__ = (
         Index("idx_source_videos_user_id", "user_id"),
         Index("idx_source_videos_status", "status"),
+        Index("idx_source_videos_youtube_id", "youtube_id"),  # Index for cache lookups
     )
 
 

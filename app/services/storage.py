@@ -72,3 +72,49 @@ def generate_presigned_url(s3_key: str, expiration: int = 3600) -> str:
         ExpiresIn=expiration,
     )
     return url
+
+
+def check_s3_object_exists(s3_key: str) -> bool:
+    """
+    Check if an object exists in S3 using HEAD request.
+    
+    Args:
+        s3_key: The S3 object key to check.
+        
+    Returns:
+        True if the object exists, False otherwise.
+    """
+    client = _get_s3_client()
+    
+    try:
+        client.head_object(Bucket=settings.aws_s3_bucket, Key=s3_key)
+        logger.info(f"S3 object exists: s3://{settings.aws_s3_bucket}/{s3_key}")
+        return True
+    except client.exceptions.ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "404":
+            logger.info(f"S3 object not found: s3://{settings.aws_s3_bucket}/{s3_key}")
+            return False
+        # For other errors (permissions, etc.), log and return False
+        logger.warning(f"Error checking S3 object {s3_key}: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Unexpected error checking S3 object {s3_key}: {e}")
+        return False
+
+
+def get_s3_url(s3_key: str) -> str:
+    """
+    Generate the public S3 URL for a given key.
+    
+    Args:
+        s3_key: The S3 object key.
+        
+    Returns:
+        The public URL of the S3 object.
+    """
+    if settings.s3_endpoint_url:
+        return f"{settings.s3_endpoint_url}/{settings.aws_s3_bucket}/{s3_key}"
+    else:
+        return f"https://{settings.aws_s3_bucket}.s3.{settings.aws_s3_region}.amazonaws.com/{s3_key}"
+

@@ -81,6 +81,7 @@ class SourceVideoResponse(BaseModel):
     title: Optional[str] = None
     duration_seconds: Optional[float] = None
     max_source_height: Optional[int] = None
+    storage_url: Optional[str] = None
     status: str
     error_message: Optional[str] = None
     created_at: datetime
