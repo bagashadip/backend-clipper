@@ -20,14 +20,15 @@ def get_or_cache_source_video(youtube_url: str, youtube_id: str, db) -> tuple[st
         - video_path_or_url: S3 URL if cached, None if needs download
         - is_cached: True if using cached version, False otherwise
     """
-    # Step 1: Check database for any completed video with this youtube_id
+    # Step 1: Check database for ANY video with this youtube_id that has storage_url
+    # We don't check status because even failed videos may have successfully cached the source
     cached_video = (
         db.query(SourceVideo)
         .filter(
             SourceVideo.youtube_id == youtube_id,
-            SourceVideo.status == "completed",
             SourceVideo.storage_url.isnot(None)
         )
+        .order_by(SourceVideo.created_at.desc())  # Get most recent
         .first()
     )
     
