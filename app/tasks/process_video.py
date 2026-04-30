@@ -6,7 +6,7 @@ from app.services.youtube import download_audio, extract_metadata, get_youtube_v
 from app.services.transcription import transcribe_audio
 from app.services.ai_selector import select_viral_clips, format_whisper_to_text
 from app.services.video_renderer import render_clip, generate_preview_from_clip, generate_thumbnail
-from app.services.storage import upload_to_s3, check_s3_object_exists, get_s3_url
+from app.services.storage import upload_to_s3, check_s3_object_exists, get_s3_url, generate_presigned_url
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ def get_or_cache_source_video(youtube_url: str, youtube_id: str, db) -> tuple[st
     
     Returns:
         (video_path_or_url, is_cached) tuple where:
-        - video_path_or_url: S3 URL if cached, None if needs download
+        - video_path_or_url: Presigned S3 URL if cached, None if needs download
         - is_cached: True if using cached version, False otherwise
     """
     # Step 1: Check database for ANY video with this youtube_id that has storage_url
@@ -36,8 +36,10 @@ def get_or_cache_source_video(youtube_url: str, youtube_id: str, db) -> tuple[st
         # Step 2: Verify the S3 file still exists (7-day lifecycle may have deleted it)
         s3_key = f"source_videos/{youtube_id}.mp4"
         if check_s3_object_exists(s3_key):
+            # Generate presigned URL for MoviePy access (valid for 2 hours)
+            presigned_url = generate_presigned_url(s3_key, expiration=7200)
             logger.info(f"[Cache HIT] Using cached source video for {youtube_id} from S3")
-            return cached_video.storage_url, True
+            return presigned_url, True
         else:
             logger.warning(f"[Cache EXPIRED] S3 file deleted by lifecycle policy for {youtube_id}")
             # Clear the storage_url since the file no longer exists
@@ -299,8 +301,9 @@ def render_clip_task(self, clip_id: str, cached_video_url: str | None = None):
                 youtube_id = get_youtube_video_id(video.youtube_url)
                 s3_key = f"source_videos/{youtube_id}.mp4"
                 if check_s3_object_exists(s3_key):
-                    cached_video_url = video.storage_url
-                    logger.info(f"[Cache] Found cached source in DB: {cached_video_url}")
+                    # Generate presigned URL for MoviePy access (valid for 2 hours)
+                    cached_video_url = generate_presigned_url(s3_key, expiration=7200)
+                    logger.info(f"[Cache] Found cached source in DB: {cached_video_url[:100]}...")
                 else:
                     logger.warning(f"[Cache] Cached source expired, will download from YouTube")
             
