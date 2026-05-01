@@ -1,4 +1,5 @@
 import logging
+import os
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.models import SourceVideo, Clip, Subtitle, User
@@ -6,9 +7,51 @@ from app.services.youtube import download_audio, extract_metadata, get_youtube_v
 from app.services.transcription import transcribe_audio
 from app.services.ai_selector import select_viral_clips, format_whisper_to_text
 from app.services.video_renderer import render_clip, generate_preview_from_clip, generate_thumbnail
-from app.services.storage import upload_to_s3, check_s3_object_exists, get_s3_url, generate_presigned_url
+from app.services.storage import upload_to_s3, check_s3_object_exists, get_s3_url, generate_presigned_url, _get_s3_client
 
 logger = logging.getLogger(__name__)
+
+
+def download_cached_video_from_s3(s3_key: str, youtube_id: str) -> str:
+    """
+    Download a cached video from S3 to local temp directory.
+    
+    Args:
+        s3_key: S3 object key (e.g., "source_videos/VIDEO_ID.mp4")
+        youtube_id: YouTube video ID for filename
+        
+    Returns:
+        Local path to downloaded file
+    """
+    import tempfile
+    import boto3
+    from app.config import get_settings
+    
+    settings = get_settings()
+    output_dir = tempfile.mkdtemp(prefix="clipper_cached_")
+    output_path = os.path.join(output_dir, f"{youtube_id}.mp4")
+    
+    logger.info(f"[Cache] Downloading cached video from S3: {s3_key}")
+    
+    try:
+        client = _get_s3_client()
+        client.download_file(settings.aws_s3_bucket, s3_key, output_path)
+        
+        file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        logger.info(f"[Cache] Downloaded from S3: {output_path} ({file_size_mb:.1f} MB)")
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"[Cache] Failed to download from S3: {e}")
+        # Cleanup on failure
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            if os.path.exists(output_dir):
+                os.rmdir(output_dir)
+        except OSError:
+            pass
+        raise
 
 
 def get_or_cache_source_video(youtube_url: str, youtube_id: str, db) -> tuple[str | None, bool]:
@@ -17,7 +60,7 @@ def get_or_cache_source_video(youtube_url: str, youtube_id: str, db) -> tuple[st
     
     Returns:
         (video_path_or_url, is_cached) tuple where:
-        - video_path_or_url: Presigned S3 URL if cached, None if needs download
+        - video_path_or_url: Local path to cached file if available, None if needs download
         - is_cached: True if using cached version, False otherwise
     """
     # Step 1: Check database for ANY video with this youtube_id that has storage_url
@@ -36,10 +79,14 @@ def get_or_cache_source_video(youtube_url: str, youtube_id: str, db) -> tuple[st
         # Step 2: Verify the S3 file still exists (7-day lifecycle may have deleted it)
         s3_key = f"source_videos/{youtube_id}.mp4"
         if check_s3_object_exists(s3_key):
-            # Generate presigned URL for MoviePy access (valid for 2 hours)
-            presigned_url = generate_presigned_url(s3_key, expiration=7200)
-            logger.info(f"[Cache HIT] Using cached source video for {youtube_id} from S3")
-            return presigned_url, True
+            try:
+                # Download from S3 to local temp file
+                local_path = download_cached_video_from_s3(s3_key, youtube_id)
+                logger.info(f"[Cache HIT] Using cached source video for {youtube_id} from S3")
+                return local_path, True
+            except Exception as e:
+                logger.error(f"[Cache] Failed to download cached video: {e}")
+                # Fall through to cache miss
         else:
             logger.warning(f"[Cache EXPIRED] S3 file deleted by lifecycle policy for {youtube_id}")
             # Clear the storage_url since the file no longer exists
@@ -293,7 +340,7 @@ def render_clip_task(self, clip_id: str, cached_video_url: str | None = None):
 
         # Use cached video URL if available, otherwise fall back to YouTube URL
         if cached_video_url:
-            logger.info(f"[Cache] Rendering clip {clip_id} using cached source: {cached_video_url}")
+            logger.info(f"[Cache] Rendering clip {clip_id} using cached source")
         else:
             # Check if the source video has a cached URL in the database
             if video.storage_url:
@@ -301,9 +348,12 @@ def render_clip_task(self, clip_id: str, cached_video_url: str | None = None):
                 youtube_id = get_youtube_video_id(video.youtube_url)
                 s3_key = f"source_videos/{youtube_id}.mp4"
                 if check_s3_object_exists(s3_key):
-                    # Generate presigned URL for MoviePy access (valid for 2 hours)
-                    cached_video_url = generate_presigned_url(s3_key, expiration=7200)
-                    logger.info(f"[Cache] Found cached source in DB: {cached_video_url[:100]}...")
+                    try:
+                        # Download from S3 to local temp file
+                        cached_video_url = download_cached_video_from_s3(s3_key, youtube_id)
+                        logger.info(f"[Cache] Found cached source in DB, downloaded from S3")
+                    except Exception as e:
+                        logger.warning(f"[Cache] Failed to download cached video: {e}")
                 else:
                     logger.warning(f"[Cache] Cached source expired, will download from YouTube")
             

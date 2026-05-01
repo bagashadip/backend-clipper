@@ -241,19 +241,10 @@ def render_clip(
     try:
         # ── Step 1: Get source video (from cache or download) ────────────
         if cached_video_path:
-            # Use cached video (S3 URL or local path)
+            # Use cached video (local path from S3 download)
             logger.info(f"Using cached video source: {cached_video_path}")
-            
-            # Check if it's an S3 URL or local path
-            if cached_video_path.startswith("http://") or cached_video_path.startswith("https://"):
-                # S3 URL - use directly with FFmpeg (network streaming)
-                logger.info(f"Streaming from S3: {cached_video_path}")
-                segment_path = cached_video_path
-                use_network_stream = True
-            else:
-                # Local file path
-                segment_path = cached_video_path
-                use_network_stream = False
+            segment_path = cached_video_path
+            use_network_stream = False
         else:
             # Download from YouTube
             if export_format == "9:16":
@@ -266,24 +257,13 @@ def render_clip(
             use_network_stream = False
         
         # ── Step 2: Load video and trim if needed ─────────────────────────
-        if use_network_stream:
-            # For S3 URLs, we need to trim using subclip since we have the full video
-            video = VideoFileClip(segment_path)
-            video_duration = video.duration
-            
-            # Trim to the requested time window
-            if video_duration > (end_time - start_time) + 5:
-                logger.info(f"Trimming cached video from {start_time:.1f}s to {end_time:.1f}s")
-                video = video.subclip(start_time, min(end_time, video_duration))
-        else:
-            # For downloaded segments, load directly
-            video = VideoFileClip(segment_path)
-            video_duration = video.duration
-            
-            # If full video was downloaded, trim to clip window
-            if video_duration > (end_time - start_time) + 5:
-                logger.info(f"Trimming to [{start_time:.1f}s, {end_time:.1f}s]")
-                video = video.subclip(start_time, min(end_time, video_duration))
+        video = VideoFileClip(segment_path)
+        video_duration = video.duration
+        
+        # If full video was downloaded/cached, trim to clip window
+        if video_duration > (end_time - start_time) + 5:
+            logger.info(f"Trimming to [{start_time:.1f}s, {end_time:.1f}s]")
+            video = video.subclip(start_time, min(end_time, video_duration))
 
         # ── Step 2: Crop & resize ─────────────────────────────────────────
         if export_format == "9:16":
