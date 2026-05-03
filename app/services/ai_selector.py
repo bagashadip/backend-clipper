@@ -13,6 +13,31 @@ settings = get_settings()
 MAX_CLIPS = 15
 MIN_VIRALITY_SCORE = 80
 
+
+def _clean_and_parse_json(text: str | None) -> list | None:
+    """
+    Strip markdown code fences from a Gemini response and parse as JSON.
+    Returns a list on success, None on any failure.
+    """
+    if not text:
+        return None
+    try:
+        # Remove ```json ... ``` or ``` ... ``` wrappers
+        cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            return parsed
+        # Gemini sometimes wraps the array in {"clips": [...]}
+        if isinstance(parsed, dict):
+            for v in parsed.values():
+                if isinstance(v, list):
+                    return v
+        return None
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning(f"JSON parse failed: {exc} | snippet: {text[:300]}")
+        return None
+
 # Tier-based duration limits
 TIER_DURATIONS: dict[str, dict[str, int]] = {
     "free":       {"min": 30, "max": 60},
@@ -307,15 +332,13 @@ def extract_and_filter_clips(
                     config=config,
                 )
 
-                # Try structured parse first, fall back to raw JSON text
-                if response.parsed:
-                    raw_clips = response.parsed
-                elif response.text:
-                    text = response.text.strip()
-                    # Strip accidental markdown code fences
-                    text = re.sub(r"^```(?:json)?\s*", "", text)
-                    text = re.sub(r"\s*```$", "", text).strip()
-                    raw_clips = json.loads(text)
+                # Prefer structured .parsed, then fall back to raw text
+                if response.parsed is not None:
+                    candidate = response.parsed
+                    raw_clips = candidate if isinstance(candidate, list) else None
+
+                if not raw_clips:
+                    raw_clips = _clean_and_parse_json(getattr(response, "text", None))
 
                 if raw_clips:
                     logger.info(f"Got {len(raw_clips)} raw clips from {model_name}")
@@ -349,7 +372,8 @@ def extract_and_filter_clips(
             break
 
     if not raw_clips:
-        raise RuntimeError("All Gemini models failed for clip selection")
+        logger.warning("All Gemini models returned no usable clips — returning empty list.")
+        return []
 
     # --- Step 1: Pydantic validation ---
     validated: list[ViralClip] = []
