@@ -7,6 +7,7 @@ from app.services.auth import get_current_user
 from pydantic import BaseModel
 import httpx
 import uuid
+import time
 import base64
 
 router = APIRouter()
@@ -27,7 +28,8 @@ async def generate_snap_token(
     if not server_key:
         raise HTTPException(status_code=500, detail="Midtrans server key not configured")
 
-    order_id = f"ZCLIP-{user.id}-{uuid.uuid4().hex[:8]}"
+    # Max 50 chars enforced by Midtrans — format is always ~25 chars
+    order_id = f"ZC-{uuid.uuid4().hex[:10]}-{int(time.time())}"
 
     # Save pending transaction to DB
     transaction = Transaction(
@@ -42,7 +44,6 @@ async def generate_snap_token(
     # Create Midtrans Snap Token
     auth_string = base64.b64encode(f"{server_key}:".encode()).decode()
     
-    # Use sandbox URL by default for safety, in production this should be toggled
     url = "https://app.sandbox.midtrans.com/snap/v1/transactions"
     
     payload = {
