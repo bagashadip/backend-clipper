@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # JWT — must be overridden in production via SECRET_KEY env var
     secret_key: str = "change-me-in-production"
 
+    # Midtrans Integration
+    midtrans_server_key: str = ""
+
     # Public-facing URLs
     # Set BACKEND_PUBLIC_URL to the HTTPS URL of the backend in production
     # so Google OAuth redirect URIs are correct.

@@ -4,6 +4,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from app.api.routes import router
 from app.api.auth_routes import router as auth_router
+from app.api.endpoints.webhooks import router as webhooks_router
+from app.api.endpoints.payment import router as payment_router
 from app.config import get_settings
 from app.database import engine, Base
 
@@ -41,6 +43,8 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 app.include_router(router)
 app.include_router(auth_router)
+app.include_router(webhooks_router, prefix="/api")
+app.include_router(payment_router, prefix="/api/payment")
 
 @app.get("/health")
 def health_check():

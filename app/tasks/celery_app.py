@@ -26,5 +26,5 @@ celery_app.conf.update(
 )
 
 celery_app.conf.update(
-    include=["app.tasks.process_video"],
+    include=["app.tasks.process_video", "app.tasks.payment_tasks"],
 )

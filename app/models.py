@@ -111,3 +111,24 @@ class Subtitle(Base):
         Index("idx_subtitles_clip_id", "clip_id"),
         Index("idx_subtitles_sequence", "clip_id", "sequence_index"),
     )
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    order_id = Column(String(255), unique=True, nullable=False)
+    gross_amount = Column(Float, nullable=False)
+    status = Column(String(50), nullable=False, default="pending")
+    payment_type = Column(String(50))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("idx_transactions_order_id", "order_id"),
+        Index("idx_transactions_user_id", "user_id"),
+    )
+
