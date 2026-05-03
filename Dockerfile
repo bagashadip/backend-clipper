@@ -30,9 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /usr/bin/nodejs /usr/local/bin/node \
     && rm -rf /var/lib/apt/lists/*
 
-# Make python3.11 / pip the default
+# Make python3.11 / pip the default (FIXED ENSUREPIP ERROR HERE)
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
-    && python3.11 -m ensurepip --upgrade \
+    && curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 \
     && python3.11 -m pip install --upgrade pip
 
 # ── Python dependencies ────────────────────────────────────────────────────────
