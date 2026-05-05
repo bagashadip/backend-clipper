@@ -79,14 +79,8 @@ def get_or_cache_source_video(youtube_url: str, youtube_id: str, db) -> tuple[st
         # Step 2: Verify the S3 file still exists (7-day lifecycle may have deleted it)
         s3_key = f"source_videos/{youtube_id}.mp4"
         if check_s3_object_exists(s3_key):
-            try:
-                # Download from S3 to local temp file
-                local_path = download_cached_video_from_s3(s3_key, youtube_id)
-                logger.info(f"[Cache HIT] Using cached source video for {youtube_id} from S3")
-                return local_path, True
-            except Exception as e:
-                logger.error(f"[Cache] Failed to download cached video: {e}")
-                # Fall through to cache miss
+            logger.info(f"[Cache HIT] Source video already in S3 for {youtube_id}")
+            return cached_video.storage_url, True
         else:
             logger.warning(f"[Cache EXPIRED] S3 file deleted by lifecycle policy for {youtube_id}")
             # Clear the storage_url since the file no longer exists
@@ -274,8 +268,8 @@ def process_video_task(self, video_id: str):
 
             db.commit()
 
-            # Render each clip (pass cached video URL if available)
-            render_clip_task.delay(str(clip.id), cached_video_url)
+            # Render each clip (pass None so each task downloads its own isolated copy)
+            render_clip_task.delay(str(clip.id), None)
 
         # --- DEDUCT QUOTA ON SUCCESS ---
         user = db.query(User).filter(User.id == video.user_id).with_for_update().first()
