@@ -22,11 +22,9 @@ def _clean_and_parse_json(text: str | None) -> list | None:
     if not text:
         return None
     try:
-        # Remove ```json ... 
-``` or ``` ... ``` wrappers
+        # Remove ```json ... ``` or ``` ... ``` wrappers
         cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*
-```$", "", cleaned).strip()
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
         parsed = json.loads(cleaned)
         if isinstance(parsed, list):
             return parsed
