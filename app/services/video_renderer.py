@@ -100,6 +100,7 @@ def generate_proxy_video(
     youtube_url: str,
     start_time: float,
     end_time: float,
+    cached_video_path: str | None = None,
 ) -> str:
     """
     Generate a lightweight 16:9 proxy video for frontend preview editing.
@@ -111,9 +112,19 @@ def generate_proxy_video(
     segment_path = None
     try:
         logger.info(f"Generating proxy for {start_time:.1f}s - {end_time:.1f}s")
-        segment_path = download_video_segment(youtube_url, start_time, end_time, quality="480p")
+        if cached_video_path:
+            logger.info(f"Using cached video source for proxy: {cached_video_path}")
+            segment_path = cached_video_path
+        else:
+            segment_path = download_video_segment(youtube_url, start_time, end_time, quality="480p")
 
         video = VideoFileClip(segment_path)
+        video_duration = video.duration
+
+        # If full video was downloaded/cached, trim to clip window
+        if video_duration > (end_time - start_time) + 5:
+            logger.info(f"Trimming proxy to [{start_time:.1f}s, {end_time:.1f}s]")
+            video = video.subclip(start_time, min(end_time, video_duration))
 
         # Force 480p resolution (854x480) for lightweight proxy
         cur_w, cur_h = video.size
@@ -141,12 +152,14 @@ def generate_proxy_video(
         return output_path
 
     finally:
-        if segment_path and os.path.exists(segment_path):
-            try:
-                os.remove(segment_path)
-                os.rmdir(os.path.dirname(segment_path))
-            except OSError:
-                pass
+        # Only cleanup if it's a local file (not an S3 URL) and we downloaded it
+        if not cached_video_path and segment_path and os.path.exists(segment_path):
+            if isinstance(segment_path, str) and not segment_path.startswith("http"):
+                try:
+                    os.remove(segment_path)
+                    os.rmdir(os.path.dirname(segment_path))
+                except OSError:
+                    pass
 
 
 def generate_thumbnail(rendered_path: str) -> str:

@@ -206,13 +206,29 @@ def generate_clip_proxy(
 
     # Generate proxy
     import os
+    import logging
     from app.services.video_renderer import generate_proxy_video
 
+    cached_video_url = None
     try:
+        if video.storage_url:
+            from app.services.youtube import get_youtube_video_id
+            from app.services.storage import check_s3_object_exists
+            from app.tasks.process_video import download_cached_video_from_s3
+
+            youtube_id = get_youtube_video_id(video.youtube_url)
+            s3_key = f"source_videos/{youtube_id}.mp4"
+            if check_s3_object_exists(s3_key):
+                try:
+                    cached_video_url = download_cached_video_from_s3(s3_key, youtube_id)
+                except Exception as e:
+                    pass
+
         proxy_path = generate_proxy_video(
             youtube_url=video.youtube_url,
             start_time=clip.start_time,
             end_time=clip.end_time,
+            cached_video_path=cached_video_url,
         )
         upload_to_s3(proxy_path, proxy_key)
         url = generate_presigned_url(proxy_key, expiration=3600)
@@ -224,8 +240,22 @@ def generate_clip_proxy(
         except OSError:
             pass
 
+        if cached_video_url and os.path.exists(cached_video_url):
+            try:
+                os.remove(cached_video_url)
+                os.rmdir(os.path.dirname(cached_video_url))
+            except OSError:
+                pass
+
         return {"proxy_url": url}
     except Exception as e:
+        # Cleanup on failure too
+        if cached_video_url and os.path.exists(cached_video_url):
+            try:
+                os.remove(cached_video_url)
+                os.rmdir(os.path.dirname(cached_video_url))
+            except OSError:
+                pass
         raise HTTPException(status_code=500, detail=f"Failed to generate proxy: {str(e)[:200]}")
 
 
