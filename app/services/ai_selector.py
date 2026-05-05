@@ -22,9 +22,11 @@ def _clean_and_parse_json(text: str | None) -> list | None:
     if not text:
         return None
     try:
-        # Remove ```json ... ``` or ``` ... ``` wrappers
+        # Remove ```json ... 
+``` or ``` ... ``` wrappers
         cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+        cleaned = re.sub(r"\s*
+```$", "", cleaned).strip()
         parsed = json.loads(cleaned)
         if isinstance(parsed, list):
             return parsed
@@ -81,19 +83,24 @@ Tugasmu: Analisis transkrip video YouTube berikut dan ekstrak momen-momen terbai
 
 1. **DURASI**: Setiap klip HARUS berdurasi antara {min_duration}–{max_duration} detik. Tidak kurang, tidak lebih. Ini harga mati.
 
-2. **MULAI DARI HOOK**: `start_time` harus tepat di momen pembicara mengucapkan kalimat pertama yang berbobot — bukan intro, bukan sapaan, bukan sponsor. Langsung inti.
+2. **FORMAT WAKTU (SANGAT KRITIKAL)**: `start_time` dan `end_time` HARUS direpresentasikan dalam format **TOTAL DETIK (INTEGER)**. 
+   - DILARANG KERAS menggunakan format desimal untuk menit (contoh: DILARANG menulis 1.23 untuk maksud 1 menit 23 detik).
+   - DILARANG KERAS menggunakan format teks jam digital seperti "01:23".
+   - CONTOH BENAR: Jika momen viral terjadi pada 1 menit 30 detik, kamu WAJIB menulis angka 90. Jika terjadi pada 2 menit 5 detik, kamu WAJIB menulis angka 125.
 
-3. **AKHIRI DENGAN TUNTAS**: `end_time` harus di titik pembicara benar-benar menyelesaikan satu pikiran/poin — bukan di tengah kalimat, bukan sebelum kesimpulan. Lebih baik 2–3 detik lebih panjang daripada memotong di tengah.
+3. **MULAI DARI HOOK**: `start_time` harus tepat di momen pembicara mengucapkan kalimat pertama yang berbobot — bukan intro, bukan sapaan, bukan sponsor. Langsung inti.
 
-4. **BERDIRI SENDIRI**: Klip harus dapat dipahami tanpa konteks video asli.
+4. **AKHIRI DENGAN TUNTAS**: `end_time` harus di titik pembicara benar-benar menyelesaikan satu pikiran/poin — bukan di tengah kalimat, bukan sebelum kesimpulan. Lebih baik 2–3 detik lebih panjang daripada memotong di tengah.
 
-5. **TIDAK OVERLAP**: Klip tidak boleh saling tumpang tindih satu sama lain.
+5. **BERDIRI SENDIRI**: Klip harus dapat dipahami tanpa konteks video asli.
 
-6. **SKOR MINIMAL 80**: Hanya kembalikan klip dengan `virality_score` ≥ 80. Jika tidak ada yang memenuhi, jangan kembalikan apa-apa.
+6. **TIDAK OVERLAP**: Klip tidak boleh saling tumpang tindih satu sama lain.
 
-7. **MAKSIMAL {max_clips} KLIP**: Jika lebih, pilih yang skor tertinggi.
+7. **SKOR MINIMAL 80**: Hanya kembalikan klip dengan `virality_score` ≥ 80. Jika tidak ada yang memenuhi, jangan kembalikan apa-apa.
 
-8. **TIMESTAMP PRESISI**: `start_time` dan `end_time` harus merujuk pada timestamp yang benar-benar ada di transkrip.
+8. **MAKSIMAL {max_clips} KLIP**: Jika lebih, pilih yang skor tertinggi.
+
+9. **TIMESTAMP PRESISI**: `start_time` dan `end_time` harus merujuk pada timestamp yang benar-benar ada di transkrip.
 
 ---
 ### KRITERIA KLIP YANG VIRAL:
@@ -117,8 +124,8 @@ TRANSKRIP:
 ---
 Kembalikan JSON array. Setiap item:
 - "title": Judul pendek yang catchy (Bahasa Indonesia, maks 10 kata)
-- "start_time": Waktu mulai (detik, desimal)
-- "end_time": Waktu selesai (detik, desimal)
+- "start_time": Waktu mulai (TOTAL DETIK, Wajib Integer)
+- "end_time": Waktu selesai (TOTAL DETIK, Wajib Integer)
 - "virality_score": 1–100 (integer)
 - "reasoning": Satu kalimat — kenapa ini viral (Bahasa Indonesia)"""
 
@@ -137,15 +144,15 @@ def _build_prompt(user_tier: str, video_duration: float, transcript_text: str) -
         .replace("{transcript_text}", transcript_text)
     )
 
-
+# Memaksa AI memberikan Integer murni di layer Schema
 CLIP_SCHEMA = types.Schema(
     type=types.Type.ARRAY,
     items=types.Schema(
         type=types.Type.OBJECT,
         properties={
             "title":          types.Schema(type=types.Type.STRING,  description="Judul pendek yang catchy"),
-            "start_time":     types.Schema(type=types.Type.NUMBER,  description="Waktu mulai dalam detik"),
-            "end_time":       types.Schema(type=types.Type.NUMBER,  description="Waktu selesai dalam detik"),
+            "start_time":     types.Schema(type=types.Type.INTEGER, description="TOTAL DETIK (Integer bulat). WAJIB total detik! Contoh: 1 mnt 30 dtk = 90"),
+            "end_time":       types.Schema(type=types.Type.INTEGER, description="TOTAL DETIK (Integer bulat). WAJIB total detik! Contoh: 2 mnt 15 dtk = 135"),
             "virality_score": types.Schema(type=types.Type.INTEGER, description="Skor viralitas 1-100"),
             "reasoning":      types.Schema(type=types.Type.STRING,  description="Alasan kenapa klip ini viral"),
         },
