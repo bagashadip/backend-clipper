@@ -118,6 +118,7 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
       BGUTIL_POT_SERVER_URL: http://bgutil-provider:4416
+      TRITON_CACHE_DIR: /tmp/.triton
     depends_on:
       postgres:
         condition: service_healthy
