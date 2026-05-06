@@ -5,6 +5,7 @@ import time
 from pydantic import BaseModel, Field, field_validator
 from google import genai
 from google.genai import types
+from openai import OpenAI
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,153 @@ def format_whisper_to_text(whisper_words: list[dict]) -> str:
     return "\n".join(lines)
 
 # ---------------------------------------------------------------------------
+# AI Provider Functions (Dynamic Switch via settings.ai_provider)
+# ---------------------------------------------------------------------------
+
+def _call_gemini(prompt: str, user_tier: str = "free") -> list[dict] | None:
+    """Call Gemini with structured schema enforcement and retry logic.
+
+    Returns parsed clip dicts on success, None on failure.
+    """
+    client = genai.Client(
+        api_key=settings.gemini_api_key,
+        http_options=types.HttpOptions(timeout=180_000),
+    )
+
+    config = types.GenerateContentConfig(
+        temperature=0.7,
+        max_output_tokens=8192,
+        response_mime_type="application/json",
+        response_schema=CLIP_SCHEMA,
+    )
+
+    if user_tier == "free":
+        models_to_try = ["gemini-2.5-flash"]
+    else:
+        models_to_try = ["gemini-2.5-pro"]
+
+    for model_name in models_to_try:
+        for attempt in range(3):
+            try:
+                logger.info(f"Trying Gemini {model_name} (attempt {attempt+1}/3)")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=config,
+                )
+
+                raw_clips: list[dict] | None = None
+                if response.parsed is not None:
+                    candidate = response.parsed
+                    raw_clips = candidate if isinstance(candidate, list) else None
+
+                if not raw_clips:
+                    raw_clips = _clean_and_parse_json(getattr(response, "text", None))
+
+                if raw_clips:
+                    logger.info(f"Gemini {model_name} returned {len(raw_clips)} raw clips")
+                    return raw_clips
+
+            except json.JSONDecodeError as e:
+                if attempt < 2:
+                    wait = 2 ** attempt * 5
+                    logger.warning(
+                        f"Gemini {model_name} JSON parse error (attempt {attempt+1}/3), "
+                        f"retrying in {wait}s: {e}"
+                    )
+                    time.sleep(wait)
+                else:
+                    logger.warning(f"Gemini {model_name} failed (JSON): {e}")
+                    break
+            except Exception as e:
+                err_str = str(e)
+                if ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str
+                        or "RESOURCE_EXHAUSTED" in err_str or "timed out" in err_str) and attempt < 2:
+                    wait = 2 ** attempt * 5
+                    logger.warning(
+                        f"Gemini {model_name} transient error (attempt {attempt+1}/3), "
+                        f"retrying in {wait}s: {e}"
+                    )
+                    time.sleep(wait)
+                else:
+                    logger.warning(f"Gemini {model_name} failed: {e}")
+                    break
+        # If we got results from this model, stop trying other models
+        # (handled by return in the loop above)
+
+    return None
+
+
+def _call_deepseek(prompt: str, user_tier: str = "free") -> list[dict] | None:
+    """Call DeepSeek V4 Pro via OpenAI-compatible API with retry logic.
+
+    DeepSeek lacks Gemini's native response_schema, so we rely on
+    ``response_format={"type": "json_object"}`` + ``_clean_and_parse_json()``
+    for structured output.
+    """
+    client = OpenAI(
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
+        timeout=180.0,
+    )
+
+    model = "deepseek-chat"  # DeepSeek V4 Pro / V3 (OpenAI-compatible endpoint)
+
+    for attempt in range(3):
+        try:
+            logger.info(f"Calling DeepSeek {model} (attempt {attempt+1}/3)")
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.7,
+                max_tokens=8192,
+            )
+
+            raw_text = response.choices[0].message.content
+            if not raw_text:
+                logger.warning("DeepSeek returned empty response")
+                continue
+
+            clips = _clean_and_parse_json(raw_text)
+            if clips:
+                logger.info(f"DeepSeek returned {len(clips)} raw clips")
+                return clips
+
+            logger.warning(f"DeepSeek JSON parse failed, raw: {raw_text[:300]}")
+
+        except Exception as e:
+            err_str = str(e).lower()
+            if ("429" in err_str or "503" in err_str or "timed out" in err_str
+                    or "rate" in err_str) and attempt < 2:
+                wait = 2 ** attempt * 5
+                logger.warning(
+                    f"DeepSeek transient error (attempt {attempt+1}/3), "
+                    f"retrying in {wait}s: {e}"
+                )
+                time.sleep(wait)
+            else:
+                logger.error(f"DeepSeek call failed: {e}")
+                break
+
+    return None
+
+
+def _call_ai(prompt: str, user_tier: str = "free") -> list[dict] | None:
+    """Dispatch to the configured AI provider."""
+    provider = settings.ai_provider
+    logger.info(f"AI provider: {provider}")
+
+    if provider == "deepseek":
+        return _call_deepseek(prompt, user_tier)
+    elif provider == "gemini":
+        return _call_gemini(prompt, user_tier)
+    else:
+        logger.error(f"Unknown AI_PROVIDER '{provider}' — falling back to DeepSeek")
+        return _call_deepseek(prompt, user_tier)
+
+
+# ---------------------------------------------------------------------------
 # Main Extraction Function
 # ---------------------------------------------------------------------------
 
@@ -294,7 +442,9 @@ def extract_and_filter_clips(
     user_tier: str = "free",
 ) -> list[ViralClip]:
     """
-    Full pipeline: prompt Gemini → parse → validate → smart-pad → filter → cap.
+    Full pipeline: prompt AI (Gemini or DeepSeek) → parse → validate → smart-pad → filter → cap.
+
+    Provider is controlled by the ``AI_PROVIDER`` env var (``"gemini"`` or ``"deepseek"``).
 
     Returns:
         List of ViralClip objects (score >= 80, padded to min_dur, max 15 items).
@@ -306,78 +456,15 @@ def extract_and_filter_clips(
     # --- Build prompt ---
     prompt = _build_prompt(user_tier, video_duration, transcript_text)
 
-    # --- Call Gemini ---
-    client = genai.Client(
-        api_key=settings.gemini_api_key,
-        http_options=types.HttpOptions(timeout=180_000),
+    # --- Call AI (Gemini or DeepSeek based on AI_PROVIDER env var) ---
+    logger.info(
+        f"Sending transcript to AI provider '{settings.ai_provider}' "
+        f"(tier={user_tier}, duration={min_dur}-{max_dur}s)"
     )
-
-    config = types.GenerateContentConfig(
-        temperature=0.7,
-        max_output_tokens=8192,
-        response_mime_type="application/json",
-        response_schema=CLIP_SCHEMA,
-    )
-
-    logger.info(f"Sending transcript to Gemini (tier={user_tier}, duration={min_dur}-{max_dur}s)")
-
-    if user_tier == "free":
-        models_to_try = ["gemini-2.5-flash"]
-    else:
-        models_to_try = ["gemini-2.5-pro"]
-    raw_clips: list[dict] | None = None
-
-    for model_name in models_to_try:
-        for attempt in range(3):
-            try:
-                logger.info(f"Trying model {model_name} (attempt {attempt+1}/3)")
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=config,
-                )
-
-                # Prefer structured .parsed, then fall back to raw text
-                if response.parsed is not None:
-                    candidate = response.parsed
-                    raw_clips = candidate if isinstance(candidate, list) else None
-
-                if not raw_clips:
-                    raw_clips = _clean_and_parse_json(getattr(response, "text", None))
-
-                if raw_clips:
-                    logger.info(f"Got {len(raw_clips)} raw clips from {model_name}")
-                    break
-
-            except json.JSONDecodeError as e:
-                if attempt < 2:
-                    wait = 2 ** attempt * 5
-                    logger.warning(
-                        f"{model_name} JSON parse error (attempt {attempt+1}/3), retrying in {wait}s: {e}\n"
-                        f"Raw text: {getattr(response, 'text', '<no text>')[:500]}"
-                    )
-                    time.sleep(wait)
-                else:
-                    logger.warning(
-                        f"{model_name} failed (JSON): {e}\n"
-                        f"Raw text: {getattr(response, 'text', '<no text>')[:500]}"
-                    )
-                    break
-            except Exception as e:
-                err_str = str(e)
-                if ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str
-                        or "RESOURCE_EXHAUSTED" in err_str or "timed out" in err_str) and attempt < 2:
-                    wait = 2 ** attempt * 5
-                    logger.warning(f"{model_name} transient error (attempt {attempt+1}/3), retrying in {wait}s: {e}")
-                    time.sleep(wait)
-                else:
-                    logger.warning(f"{model_name} failed: {e}")
-                    break
-        if raw_clips:
-            break
+    raw_clips = _call_ai(prompt, user_tier)
 
     if not raw_clips:
-        logger.warning("All Gemini models returned no usable clips — returning empty list.")
+        logger.warning("AI provider returned no usable clips — returning empty list.")
         return []
 
     # --- Step 1: Pydantic validation ---
