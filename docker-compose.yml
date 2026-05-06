@@ -83,8 +83,11 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
       BGUTIL_POT_SERVER_URL: http://bgutil-provider:4416
+      HF_HOME: /app/.cache/huggingface
     ports:
       - "8000:8000"
+    volumes:
+      - whisper_cache:/app/.cache/huggingface
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,7 +121,10 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
       BGUTIL_POT_SERVER_URL: http://bgutil-provider:4416
+      HF_HOME: /app/.cache/huggingface
       TRITON_CACHE_DIR: /tmp/.triton
+    volumes:
+      - whisper_cache:/app/.cache/huggingface
     depends_on:
       postgres:
         condition: service_healthy
@@ -138,3 +144,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  whisper_cache:

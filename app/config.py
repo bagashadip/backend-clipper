@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5432/clipper"
     redis_url: str = "redis://localhost:6379/0"
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-pro"  # "" = auto (flash for free, pro for paid); else e.g. "gemini-2.5-pro"
     # DeepSeek (OpenAI-compatible)
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

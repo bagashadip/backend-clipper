@@ -289,7 +289,10 @@ def _call_gemini(prompt: str, user_tier: str = "free") -> list[dict] | None:
         response_schema=CLIP_SCHEMA,
     )
 
-    if user_tier == "free":
+    if settings.gemini_model:
+        models_to_try = [settings.gemini_model]
+        logger.info(f"Gemini model override: {settings.gemini_model}")
+    elif user_tier == "free":
         models_to_try = ["gemini-2.5-flash"]
     else:
         models_to_try = ["gemini-2.5-pro"]
@@ -373,9 +376,14 @@ def _call_deepseek(prompt: str, user_tier: str = "free") -> list[dict] | None:
             )
 
             raw_text = response.choices[0].message.content
+            finish = response.choices[0].finish_reason
             if not raw_text:
-                logger.warning("DeepSeek returned empty response")
-                continue
+                logger.warning(
+                    f"DeepSeek returned empty response (finish_reason={finish}). "
+                    f"Check DEEPSEEK_MODEL — '{model}' may not be a valid model ID."
+                )
+                # Empty response is a config issue, not transient — don't retry
+                return None
 
             clips = _clean_and_parse_json(raw_text)
             if clips:
