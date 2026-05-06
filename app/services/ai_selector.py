@@ -359,7 +359,7 @@ def _call_deepseek(prompt: str, user_tier: str = "free") -> list[dict] | None:
         timeout=180.0,
     )
 
-    model = "deepseek-chat"  # DeepSeek V4 Pro / V3 (OpenAI-compatible endpoint)
+    model = settings.deepseek_model  # e.g. "deepseek-chat", "deepseek-v4-pro"
 
     for attempt in range(3):
         try:

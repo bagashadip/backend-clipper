@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     # DeepSeek (OpenAI-compatible)
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"  # e.g. "deepseek-chat", "deepseek-v4-pro"
     # AI provider switch: "gemini" or "deepseek"
     ai_provider: str = "deepseek"
     aws_access_key_id: str = ""
