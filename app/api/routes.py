@@ -135,7 +135,7 @@ def update_clip(
     if request.end_time is not None:
         clip.end_time = request.end_time
     if request.caption_style is not None:
-        if request.caption_style not in ("classic", "hormozi", "hormozi_dynamic", "impact_pop", "typewriter", "none"):
+        if request.caption_style not in ("classic", "hormozi", "hormozi_dynamic", "impact_pop", "typewriter", "none", "kenergy", "midnight", "cleanboss", "staccato", "serenity"):
             raise HTTPException(status_code=400, detail="Invalid caption style")
         clip.caption_style = request.caption_style
     if request.quality is not None:
