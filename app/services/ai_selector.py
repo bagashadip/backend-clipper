@@ -96,7 +96,10 @@ Ini adalah aturan PALING PENTING. Setiap klip yang kamu hasilkan WAJIB melewati 
 **A. STRUKTUR KLIP:**
 1. **DURASI IDEAL**: Targetkan panjang klip di kisaran {min_duration}–{max_duration} detik. NAMUN, ada TOLERANSI. Jika kalimat pembicara belum selesai di detik ke-{max_duration}, kamu WAJIB meneruskan `end_time` beberapa detik lagi (melewati batas maksimal) sampai kalimat tersebut benar-benar titik/selesai. Kesempurnaan kalimat jauh lebih penting daripada batas durasi.
 2. **START HARUS HOOK**: `start_time` tepat di momen pembicara mulai mengucapkan kalimat pertama yang berbobot. LEWATI: intro, sapaan "hai guys", "selamat datang kembali", basa-basi, sponsor, atau pengantar "di video kali ini".
-3. **END HARUS TUNTAS**: `end_time` tepat di akhir kalimat yang menyelesaikan satu ide utuh. BUKAN di tengah kata. BUKAN di jeda napas. BUKAN sebelum poin selesai. VERIFIKASI dengan protokol di atas.
+3. **END HARUS TUNTAS (STORY ARC)**: `end_time` BUKAN sekadar titik kalimat biasa, tapi titik di mana KESIMPULAN atau PUNCHLINE dari topik tersebut benar-benar tersampaikan. 
+   - Jika pembicara sedang menjelaskan sebuah konsep, berargumen, atau bercerita, JANGAN potong di tengah-tengah penjelasan. 
+   - Manfaatkan durasi semaksimal mungkin (mendekati {max_duration} detik) jika memang cerita tersebut membutuhkannya agar konteksnya 100% utuh dari *Setup* hingga *Resolution*.
+   - VERIFIKASI dengan protokol di atas untuk memastikan pemotongan terjadi tepat setelah kalimat kesimpulan selesai.
 4. **BERDIRI SENDIRI**: Klip harus bisa dipahami orang yang TIDAK PERNAH menonton video aslinya. Jika ada referensi ke "tadi", "sebelumnya", "video kemarin", atau konteks yang hilang — jangan dipilih.
 
 **B. FORMAT TEKNIS:**
