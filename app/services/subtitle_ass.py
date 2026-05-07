@@ -47,6 +47,16 @@ _COLOR_GREEN = "&H0000FF00&"   # BGR for green (R=00, G=FF, B=00)
 _COLOR_ORANGE = "&H0000A5FF&"  # BGR for orange (R=FF, G=A5, B=00)
 _COLOR_CYAN = "&H00FFFF00&"    # BGR for cyan  (R=00, G=FF, B=FF)
 
+# ── Additional colors for new styles ──────────────────────────────────────
+_COLOR_ORANGE_RED = "&H000045FF&"   # #FF4500 → orange-red (kenergy)
+_COLOR_NEON_GREEN = "&H0088FF00&"   # #00FF88 → neon green (midnight)
+_COLOR_DIM_GRAY = "&H00AAAAAA&"     # #AAAAAA → dim gray (midnight/cleanboss)
+_COLOR_LIGHT_GRAY = "&H00CCCCCC&"   # #CCCCCC → light gray (cleanboss)
+_COLOR_HOT_PINK = "&H00B469FF&"     # #FF69B4 → hot pink (serenity)
+_COLOR_LAVENDER = "&H00E0D5E8&"     # #E8D5E0 → muted lavender (serenity)
+_COLOR_SOFT_BLACK = "&H00333333&"   # #333333 → soft black outline (cleanboss)
+_COLOR_TRANS_BLACK = "&H40000000&"  # semi-transparent black (cleanboss shadow)
+
 # ── Style presets ─────────────────────────────────────────────────────────
 
 STYLE_PRESETS = {
@@ -113,6 +123,109 @@ STYLE_PRESETS = {
         "shadow": 0,
         "alignment": 2,   # bottom-center
         "margin_v": 60,
+    },
+    # ── NEW: Viral 2025-2026 styles ───────────────────────────────────────
+    "kenergy": {
+        "fontname": "DejaVu Sans",
+        "fontsize": 19,
+        "primary_color": _COLOR_WHITE,
+        "highlight_color": _COLOR_ORANGE_RED,
+        "outline_color": _COLOR_BLACK,
+        "back_color": "&H00000000&",
+        "bold": -1,
+        "outline": 3,
+        "shadow": 1,
+        "alignment": 2,
+        "margin_v": 55,
+        # Flash-white → snap to orange-red (fast, aggressive)
+        "animate_active": True,
+        "animate_flash_color": _COLOR_WHITE,
+        "animate_glow_blur": 0,
+        "animate_pop_scale": 112,
+        "animate_pop_duration": 50,
+        "animate_settle_duration": 60,
+    },
+    "midnight": {
+        "fontname": "DejaVu Sans",
+        "fontsize": 18,
+        "primary_color": _COLOR_DIM_GRAY,
+        "highlight_color": _COLOR_NEON_GREEN,
+        "outline_color": "&H00000000&",  # no outline — glow replaces it
+        "back_color": "&H00000000&",
+        "bold": -1,
+        "outline": 0,
+        "shadow": 0,
+        "alignment": 2,
+        "margin_v": 55,
+        # Persistent glow on active word (no settle — stays glowing)
+        "animate_active": True,
+        "animate_flash_color": _COLOR_NEON_GREEN,
+        "animate_glow_blur": 3,
+        "animate_pop_scale": 100,
+        "animate_pop_duration": 100,
+        "animate_settle_duration": 9999,  # effectively permanent glow
+    },
+    "cleanboss": {
+        "fontname": "DejaVu Sans",
+        "fontsize": 18,
+        "primary_color": _COLOR_LIGHT_GRAY,
+        "highlight_color": _COLOR_WHITE,
+        "outline_color": _COLOR_SOFT_BLACK,
+        "back_color": "&H00000000&",
+        "bold": 0,
+        "outline": 1,
+        "shadow": 2,
+        "alignment": 2,
+        "margin_v": 60,
+        # Subtle scale bump, no flash
+        "animate_active": True,
+        "animate_flash_color": _COLOR_WHITE,
+        "animate_glow_blur": 0,
+        "animate_pop_scale": 106,
+        "animate_pop_duration": 100,
+        "animate_settle_duration": 120,
+    },
+    "staccato": {
+        "fontname": "DejaVu Sans",
+        "fontsize": 20,
+        "primary_color": _COLOR_WHITE,
+        "highlight_color": _COLOR_WHITE,  # only word shown, always white
+        "outline_color": _COLOR_BLACK,
+        "back_color": "&H00000000&",
+        "bold": -1,
+        "outline": 3,
+        "shadow": 1,
+        "alignment": 2,
+        "margin_v": 55,
+        # Aggressive punch-in: 70% → 115% → 100% in 80ms
+        "animate_active": True,
+        "animate_flash_color": _COLOR_WHITE,
+        "animate_glow_blur": 1,
+        "animate_pop_scale": 115,
+        "animate_pop_duration": 50,
+        "animate_settle_duration": 30,
+        # Special: only show active word (staccato mode)
+        "staccato_mode": True,
+    },
+    "serenity": {
+        "fontname": "DejaVu Sans",
+        "fontsize": 17,
+        "primary_color": _COLOR_LAVENDER,
+        "highlight_color": _COLOR_HOT_PINK,
+        "outline_color": "&H00000000&",  # no hard outline
+        "back_color": "&H00000000&",
+        "bold": 0,
+        "outline": 0,
+        "shadow": 3,
+        "alignment": 2,
+        "margin_v": 60,
+        # Soft glow on active, gentle color transition
+        "animate_active": True,
+        "animate_flash_color": _COLOR_HOT_PINK,
+        "animate_glow_blur": 2,
+        "animate_pop_scale": 104,
+        "animate_pop_duration": 180,
+        "animate_settle_duration": 200,
     },
 }
 
@@ -259,9 +372,32 @@ def generate_dynamic_ass(
             else:
                 # ── Original highlight / animated path ───────────────────
                 animate = preset.get("animate_active", False)
+                staccato = preset.get("staccato_mode", False)
+
                 for j, word_text in enumerate(words_in_group):
                     escaped = _escape_ass_text(word_text.upper())
-                    if has_highlight and j == active_idx:
+                    is_active = (j == active_idx)
+
+                    if staccato:
+                        # Staccato: ONLY render active word (punch-in animation)
+                        if not is_active:
+                            continue
+                        # Active word with animation
+                        if animate:
+                            gb = preset.get("animate_glow_blur", 1)
+                            ps = preset.get("animate_pop_scale", 115)
+                            pd = preset.get("animate_pop_duration", 50)
+                            sd = preset.get("animate_settle_duration", 30)
+                            ov = (
+                                f"{{\\c{primary_color}\\blur{gb}\\fscx70\\fscy70"
+                                f"\\t(0,{pd},\\c{primary_color}\\blur0\\fscx{ps}\\fscy{ps})"
+                                f"\\t({pd},{pd + sd},\\fscx100\\fscy100)}}"
+                            )
+                            parts.append(f"{ov}{escaped}{{\\blur0\\fscx100\\fscy100}}")
+                        else:
+                            parts.append(escaped)
+
+                    elif has_highlight and is_active:
                         # Initial color: flash color if animated, else highlight
                         if animate and "animate_flash_color" in preset:
                             init_color = preset["animate_flash_color"]
