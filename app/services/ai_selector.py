@@ -94,7 +94,7 @@ Ini adalah aturan PALING PENTING. Setiap klip yang kamu hasilkan WAJIB melewati 
 ### ATURAN WAJIB:
 
 **A. STRUKTUR KLIP:**
-1. **DURASI**: {min_duration}–{max_duration} detik. HARGA MATI. Di luar itu, klip DIDISKUALIFIKASI.
+1. **DURASI IDEAL**: Targetkan panjang klip di kisaran {min_duration}–{max_duration} detik. NAMUN, ada TOLERANSI. Jika kalimat pembicara belum selesai di detik ke-{max_duration}, kamu WAJIB meneruskan `end_time` beberapa detik lagi (melewati batas maksimal) sampai kalimat tersebut benar-benar titik/selesai. Kesempurnaan kalimat jauh lebih penting daripada batas durasi.
 2. **START HARUS HOOK**: `start_time` tepat di momen pembicara mulai mengucapkan kalimat pertama yang berbobot. LEWATI: intro, sapaan "hai guys", "selamat datang kembali", basa-basi, sponsor, atau pengantar "di video kali ini".
 3. **END HARUS TUNTAS**: `end_time` tepat di akhir kalimat yang menyelesaikan satu ide utuh. BUKAN di tengah kata. BUKAN di jeda napas. BUKAN sebelum poin selesai. VERIFIKASI dengan protokol di atas.
 4. **BERDIRI SENDIRI**: Klip harus bisa dipahami orang yang TIDAK PERNAH menonton video aslinya. Jika ada referensi ke "tadi", "sebelumnya", "video kemarin", atau konteks yang hilang — jangan dipilih.
