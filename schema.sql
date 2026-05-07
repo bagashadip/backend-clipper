@@ -5,7 +5,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TYPE subscription_tier AS ENUM ('free', 'pro', 'enterprise');
 CREATE TYPE video_status AS ENUM ('pending', 'downloading', 'transcribing', 'analyzing', 'rendering', 'completed', 'failed');
 CREATE TYPE clip_status AS ENUM ('pending', 'rendering', 'completed', 'failed');
-CREATE TYPE caption_style AS ENUM ('classic', 'hormozi', 'hormozi_dynamic', 'impact_pop', 'typewriter', 'none');
+CREATE TYPE caption_style AS ENUM ('classic', 'hormozi', 'hormozi_dynamic', 'impact_pop', 'typewriter', 'none', 'kenergy', 'midnight', 'cleanboss', 'staccato', 'serenity');
 CREATE TYPE clip_quality AS ENUM ('480p', '720p', '1080p');
 
 CREATE TABLE users (

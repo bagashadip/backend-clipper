@@ -68,7 +68,9 @@ class Clip(Base):
     virality_score = Column(Integer)
     reasoning = Column(Text)
     caption_style = Column(
-        SAEnum("classic", "hormozi", "hormozi_dynamic", "impact_pop", "typewriter", "none", name="caption_style"),
+        SAEnum("classic", "hormozi", "hormozi_dynamic", "impact_pop", "typewriter", "none",
+               "kenergy", "midnight", "cleanboss", "staccato", "serenity",
+               name="caption_style"),
         nullable=False, default="classic"
     )
     quality = Column(
