@@ -316,7 +316,7 @@ def render_clip(
 
         # ── Step 3: CAPTION STYLE ROUTING ─────────────────────────────────
 
-        if caption_style in ("hormozi_dynamic", "impact_pop", "typewriter") and len(word_timestamps) > 0:
+        if caption_style in ("hormozi_dynamic", "impact_pop", "typewriter", "kenergy", "midnight", "cleanboss", "staccato", "serenity") and len(word_timestamps) > 0:
             # ────────────────────────────────────────────────────────────
             # ROUTE A: New ASS pipeline (per-word karaoke highlighting)
             # ────────────────────────────────────────────────────────────
