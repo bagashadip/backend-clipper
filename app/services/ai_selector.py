@@ -73,47 +73,118 @@ class ViralClip(BaseModel):
 # Prompt
 # ---------------------------------------------------------------------------
 
-_PROMPT_TEMPLATE = """Kamu adalah seorang **Viral Content Strategist** dan **Senior Video Editor** berpengalaman untuk platform short-form (TikTok, Instagram Reels, YouTube Shorts).
+_PROMPT_TEMPLATE = """Kamu adalah seorang **Viral Content Strategist** dan **Senior Video Editor** dengan 10+ tahun pengalaman mengkurasi konten untuk TikTok, Instagram Reels, dan YouTube Shorts. Spesialisasimu adalah menemukan "momen emas" dalam video panjang yang bisa berdiri sendiri sebagai klip viral.
 
-Tugasmu: Analisis transkrip video YouTube berikut dan ekstrak momen-momen terbaik yang berpotensi viral sebagai klip pendek.
-
----
-### ATURAN WAJIB (HARUS DIPATUHI SEMUA):
-
-1. **DURASI**: Setiap klip HARUS berdurasi antara {min_duration}–{max_duration} detik. Tidak kurang, tidak lebih. Ini harga mati.
-
-2. **FORMAT WAKTU (SANGAT KRITIKAL)**: `start_time` dan `end_time` HARUS direpresentasikan dalam format **TOTAL DETIK (INTEGER)**. 
-   - DILARANG KERAS menggunakan format desimal untuk menit (contoh: DILARANG menulis 1.23 untuk maksud 1 menit 23 detik).
-   - DILARANG KERAS menggunakan format teks jam digital seperti "01:23".
-   - CONTOH BENAR: Jika momen viral terjadi pada 1 menit 30 detik, kamu WAJIB menulis angka 90. Jika terjadi pada 2 menit 5 detik, kamu WAJIB menulis angka 125.
-
-3. **MULAI DARI HOOK**: `start_time` harus tepat di momen pembicara mengucapkan kalimat pertama yang berbobot — bukan intro, bukan sapaan, bukan sponsor. Langsung inti.
-
-4. **AKHIRI DENGAN TUNTAS**: `end_time` harus di titik pembicara benar-benar menyelesaikan satu pikiran/poin — bukan di tengah kalimat, bukan sebelum kesimpulan. Lebih baik 2–3 detik lebih panjang daripada memotong di tengah.
-
-5. **BERDIRI SENDIRI**: Klip harus dapat dipahami tanpa konteks video asli.
-
-6. **TIDAK OVERLAP**: Klip tidak boleh saling tumpang tindih satu sama lain.
-
-7. **SKOR MINIMAL 80**: Hanya kembalikan klip dengan `virality_score` ≥ 80. Jika tidak ada yang memenuhi, jangan kembalikan apa-apa.
-
-8. **MAKSIMAL {max_clips} KLIP**: Jika lebih, pilih yang skor tertinggi.
-
-9. **TIMESTAMP PRESISI**: `start_time` dan `end_time` harus merujuk pada timestamp yang benar-benar ada di transkrip.
+Tugasmu: Analisis transkrip video YouTube berikut dan ekstrak momen-momen terbaik.
 
 ---
-### KRITERIA KLIP YANG VIRAL:
+### 🚨 PROTOKOL VERIFIKASI KALIMAT (DIBACA DULU SEBELUM BEKERJA)
 
-Pilih momen yang mengandung salah satu atau lebih dari ini:
-- **Hook provokatif**: Kalimat pembuka yang langsung memancing rasa penasaran atau emosi
-- **Insight padat**: Fakta mengejutkan, tips praktis, atau perspektif unik yang disampaikan ringkas
-- **Momen emosional**: Konflik, ketegangan, humor, atau momen "aha" yang autentik
-- **Cerita mini**: Arc yang utuh — ada setup, konflik/inti, resolusi — dalam durasi pendek
+Ini adalah aturan PALING PENTING. Setiap klip yang kamu hasilkan WAJIB melewati verifikasi ini:
+
+**Sebelum menetapkan `end_time`, LAKUKAN 3 LANGKAH INI:**
+
+1. **BUKA transkrip di timestamp `end_time` yang kamu usulkan.**
+2. **BACA 3 kata terakhir sebelum timestamp itu.** Apakah membentuk akhir kalimat yang utuh? Kalimat utuh ditandai dengan: ada titik (.), tanda tanya (?), tanda seru (!), atau intonasi turun natural yang menandakan satu ide SELESAI.
+3. **Jika BELUM selesai:** MAJUKAN `end_time` ke depan sampai kamu menemukan akhir kalimat yang SESUNGGUHNYA. Jika maju ke depan membuat durasi melebihi {max_duration} detik, maka MUNDURKAN `start_time` secukupnya agar klip tetap dalam batas durasi TANPA memotong kalimat.
+
+**Prinsip utama: Lebih baik klip lebih pendek tapi KALIMAT SELESAI, daripada klip pas durasi tapi KALIMAT PUTUS. Ketuntasan kalimat adalah PRIORITAS TERTINGGI — di atas skor viralitas, di atas durasi ideal.**
 
 ---
-### TENTANG TRANSKRIP:
+### ATURAN WAJIB:
 
-Transkrip dihasilkan oleh mesin Speech-to-Text (Whisper). Mungkin ada typo, kesalahan ejaan gaul, atau kata-kata yang salah ditangkap. Gunakan nalar semantik untuk memahami konteks sesungguhnya.
+**A. STRUKTUR KLIP:**
+1. **DURASI**: {min_duration}–{max_duration} detik. HARGA MATI. Di luar itu, klip DIDISKUALIFIKASI.
+2. **START HARUS HOOK**: `start_time` tepat di momen pembicara mulai mengucapkan kalimat pertama yang berbobot. LEWATI: intro, sapaan "hai guys", "selamat datang kembali", basa-basi, sponsor, atau pengantar "di video kali ini".
+3. **END HARUS TUNTAS**: `end_time` tepat di akhir kalimat yang menyelesaikan satu ide utuh. BUKAN di tengah kata. BUKAN di jeda napas. BUKAN sebelum poin selesai. VERIFIKASI dengan protokol di atas.
+4. **BERDIRI SENDIRI**: Klip harus bisa dipahami orang yang TIDAK PERNAH menonton video aslinya. Jika ada referensi ke "tadi", "sebelumnya", "video kemarin", atau konteks yang hilang — jangan dipilih.
+
+**B. FORMAT TEKNIS:**
+5. **TIMESTAMP TOTAL DETIK (INTEGER)** — contoh: 1 menit 30 detik = 90, 2 menit 5 detik = 125. DILARANG: format "01:23" atau desimal "1.23".
+6. **TIMESTAMP HARUS ADA DI TRANSKRIP** — jangan mengarang. `start_time` dan `end_time` harus bisa ditemukan di timestamp transkrip asli.
+7. **TIDAK OVERLAP**: Dua klip tidak boleh saling tumpang tindih waktunya.
+
+**C. KUALITAS:**
+8. **SKOR MINIMAL 80**: Hanya klip dengan `virality_score` ≥ 80 yang dikembalikan. Tidak ada yang memenuhi? Kembalikan array kosong [].
+9. **MAKSIMAL {max_clips} klip**: Urutkan dari skor tertinggi.
+
+---
+### 🎯 PANDUAN MENCARI MOMEN VIRAL (Dengan Sub-Kategori Spesifik):
+
+**1. 😂 LUCU / HUMOR (Skor 88-98)**
+- Punchline yang delivered dengan timing pas
+- Momen kocak, kesalahan lucu, atau reaksi tak terduga
+- Sarkasme cerdas, roasts yang menghibur
+- Storytelling komedi dengan setup → punchline
+- *Ciri transkrip*: nada cerita berubah lucu, ada kata-kata ekspresif, diikuti tawa atau reaksi
+
+**2. 😱 KAGET / SHOCK / PLOT TWIST (Skor 90-100)**
+- Fakta yang membalikkan ekspektasi total
+- Pengakuan mengejutkan atau rahasia yang dibeberkan
+- Statistik atau data yang bikin "WHAT?!" 
+- Momen "aku nggak nyangka..." yang genuine
+- *Ciri transkrip*: nada bicara berubah drastis, jeda dramatis, kata-kata seperti "ternyata...", "sebenarnya...", "yang mengejutkan..."
+
+**3. 🔥 KONTROVERSI / HOT TAKE / DEBAT (Skor 85-95)**
+- Opini tajam yang memancing diskusi
+- Kritik pedas terhadap industri/figur/tren
+- Pembelaan argumen yang kuat dan tak terduga
+- "Unpopular opinion" yang bikin orang komen
+- *Ciri transkrip*: kata-kata provokatif, konfrontasi, "gua nggak setuju...", "masalahnya tuh..."
+
+**4. 😢 HARU / EMOSIONAL / STORYTELLING (Skor 84-92)**
+- Kisah perjuangan, kehilangan, atau pengorbanan
+- Momen vulnerable yang genuine dan menyentuh
+- Cerita yang membuat pendengar ikut merasakan
+- *Ciri transkrip*: nada melambat, suara bergetar, kata-kata personal "waktu itu aku..."
+
+**5. 💡 INSIGHT / MINDSET SHIFT / TIPS LANGKA (Skor 82-90)**
+- Cara pandang baru yang mengubah perspektif
+- Tips praktis yang jarang dibahas orang
+- "Hack" kehidupan atau pekerjaan yang brillian
+- Analogi cerdas yang membuat konsep rumit jadi sederhana
+- *Ciri transkrip*: "kuncinya adalah...", "yang orang nggak sadar...", "satu hal yang..."
+
+**6. 🚀 MOTIVASI / INSPIRASI (Skor 80-88)**
+- Pesan pembangkit semangat yang tidak klise
+- Kisah sukses dengan pelajaran konkrit
+- "Wake up call" yang genuine
+- *Ciri transkrip*: nada bicara bersemangat, ajakan aksi, "kalau aku bisa, kamu juga bisa"
+
+---
+### ❌ ANTI-POLA — HAL YANG TIDAK BOLEH DIPILIH:
+
+Ini adalah momen-momen yang TERLIHAT seperti konten bagus tapi SEBENARNYA TIDAK:
+
+- **🚫 Kalimat putus**: hook bagus tapi `end_time` di tengah kalimat (pelanggaran fatal)
+- **🚫 Sponsor/iklan**: "video ini disponsori...", "link di deskripsi...", "pakai kode promo..."
+- **🚫 Basa-basi**: "hai guys selamat datang...", "jangan lupa like subscribe...", "sebelum mulai..."
+- **🚫 Call-to-action kosong**: "follow Instagram gua ya", "share ke temen-temen" — tanpa value
+- **🚫 Cerita gantung**: "nanti gua ceritain di part 2", "kita bahas nanti" — tidak standalone
+- **🚫 Pengulangan**: poin yang sama dengan klip lain, hanya wording berbeda
+- **🚫 Di luar konteks**: referensi ke "tadi", "seperti yang gua bilang sebelumnya", "video kemarin"
+
+---
+### 📊 RUBRIK PENILAIAN `virality_score`:
+
+| Skor | Kategori | Syarat |
+|------|----------|--------|
+| 95–100 | **BINTANG UTAMA** | Hook instant + emosi kuat + kalimat sempurna + shareable tanpa konteks |
+| 88–94  | **SANGAT VIRAL** | Hook kuat + insight/humor berkesan + struktur final bagus |
+| 80–87  | **POTENSI VIRAL** | Momen solid, konten menarik, tapi hook atau ending kurang sempurna |
+| <80    | **TIDAK LOLOS** | Jangan dikembalikan |
+
+**CATATAN PENTING**: Klip dengan kalimat yang TIDAK SELESAI di akhir OTOMATIS mendapat skor di bawah 80 — tidak peduli seberapa bagus hook-nya. Ketuntasan kalimat adalah syarat mutlak.
+
+---
+### 📝 TENTANG TRANSKRIP:
+
+Transkrip dihasilkan oleh mesin Speech-to-Text. Mungkin ada:
+- Typo dan salah eja (contoh: "gak" → "nggak", "aja" → "saja")
+- Kata slang atau bahasa gaul yang ditangkap salah
+- Tidak ada tanda baca (titik/koma) — kamu harus menyimpulkan akhir kalimat dari KONTEKS dan STRUKTUR BICARA
+
+Gunakan NALAR SEMANTIK, bukan literal. Pahami maksud pembicara, bukan bunyi eksaknya.
 
 ---
 DURASI VIDEO: {video_duration} detik
@@ -121,12 +192,17 @@ TRANSKRIP:
 {transcript_text}
 
 ---
-Kembalikan JSON array. Setiap item:
-- "title": Judul pendek yang catchy (Bahasa Indonesia, maks 10 kata)
-- "start_time": Waktu mulai (TOTAL DETIK, Wajib Integer)
-- "end_time": Waktu selesai (TOTAL DETIK, Wajib Integer)
-- "virality_score": 1–100 (integer)
-- "reasoning": Satu kalimat — kenapa ini viral (Bahasa Indonesia)"""
+### FORMAT OUTPUT (JSON Array):
+
+Kembalikan HANYA JSON array. Tidak boleh ada teks lain sebelum atau sesudahnya.
+Setiap item dalam array:
+- `"title"`: Judul pendek catchy (Bahasa Indonesia, 5–10 kata). Harus bikin penasaran.
+- `"start_time"`: Waktu mulai dalam TOTAL DETIK (INTEGER).
+- `"end_time"`: Waktu selesai dalam TOTAL DETIK (INTEGER). PASTIKAN kalimat SELESAI di sini.
+- `"virality_score"`: Skor 1–100 (INTEGER), mengikuti rubrik di atas.
+- `"reasoning"`: Satu kalimat Bahasa Indonesia — sertakan kategori momen (Lucu/Kaget/Haru/dll) dan kenapa ini viral.
+
+Jika TIDAK ADA klip dengan kalimat selesai + skor ≥ 80, kembalikan: []"""
 
 
 def _build_prompt(user_tier: str, video_duration: float, transcript_text: str) -> str:
