@@ -227,6 +227,13 @@ def process_video_task(self, video_id: str):
             db
         )
         
+        if is_cached and cached_video_url and not video.storage_url:
+            # Propagate the cached URL to this video row so S3 audio
+            # extraction picks it up (the URL came from a different row).
+            video.storage_url = cached_video_url
+            db.commit()
+            logger.info(f"[Cache] Propagated S3 URL to current video row: {cached_video_url}")
+        
         if not is_cached:
             # Cache miss - download and cache the source video
             # Determine quality based on max_source_height for optimal caching
@@ -253,9 +260,9 @@ def process_video_task(self, video_id: str):
 
         # Download/extract audio for transcription.
         # Prefer extracting from S3-cached video to avoid re-hitting YouTube.
-        if cached_video_url and video.storage_url:
+        s3_key = f"source_videos/{youtube_id}.mp4"
+        if video.storage_url and check_s3_object_exists(s3_key):
             try:
-                s3_key = f"source_videos/{youtube_id}.mp4"
                 audio_path = extract_audio_from_s3_video(s3_key, youtube_id)
             except Exception as e:
                 logger.warning(
