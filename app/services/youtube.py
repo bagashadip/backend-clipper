@@ -141,12 +141,12 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
     output_template = os.path.join(output_dir, youtube_id)
 
     ydl_opts = _get_base_opts()
-    # Do NOT override player_client here — see comment above.
-    # Use "best" (combined video+audio) instead of "bestaudio" because
-    # YouTube SABR often strips separate audio streams from web/mweb.
-    # FFmpegExtractAudio postprocessor strips the audio from the video.
+    # Do NOT override player_client here.
+    # Use bestvideo+bestaudio/best (not just "best") because mweb HLS
+    # provides separate DASH video+audio streams, not single-file combined
+    # formats. FFmpegExtractAudio strips the audio after merge.
     ydl_opts.update({
-        "format": "best",
+        "format": "bestvideo+bestaudio/best",
         "outtmpl": output_template + ".%(ext)s",
         "extract_flat": False,
         "postprocessors": [{
