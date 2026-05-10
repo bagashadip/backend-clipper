@@ -141,14 +141,12 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
     output_template = os.path.join(output_dir, youtube_id)
 
     ydl_opts = _get_base_opts()
-    ydl_opts["extractor_args"]["youtube"]["player_client"] = ["android", "ios"]
+    # NOTE: Do NOT override player_client here. _get_base_opts sets
+    # ["mweb", "web_embedded", "android_vr", "tv", "web"] which bgutil
+    # supplies GVS PO tokens for. android/ios are NOT covered by bgutil
+    # and return "Requested format is not available" on datacenter IPs.
     ydl_opts.update({
-        # Fleksibel: Cari m4a murni. Kalau gak ada, ambil best audio.
-        # Kalau best audio disembunyiin juga, ambil best (mp4 gabungan).
-        "format": "m4a/bestaudio/best",
-        
-        # HAPUS BARIS "format_sort" TOTAL DARI SINI
-        
+        "format": "bestaudio/best",
         "outtmpl": output_template + ".%(ext)s",
         "extract_flat": False,
         "postprocessors": [{
