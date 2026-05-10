@@ -108,23 +108,98 @@ def _fetch_yt_api_data(youtube_id: str) -> dict:
     return data
 
 
+# Header sets matched to the client types embedded in googlevideo.com signed
+# URLs.  The CDN validates User-Agent against the `c=` param in the URL;
+# sending a matching UA lets the request through even from a different IP.
+_DOWNLOAD_HEADER_SETS = [
+    {
+        # Best match for c=ANDROID_VR (most YT-API URLs)
+        "User-Agent": (
+            "com.google.android.apps.youtube.vr.oculus/1.60.19 "
+            "(Linux; U; Android 12; eureka-user Build/SQ3A.220605.009.A1) "
+            "gzip"
+        ),
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+        "Referer": "https://www.youtube.com/",
+        "Origin": "https://www.youtube.com",
+        "Connection": "keep-alive",
+    },
+    {
+        # Fallback: generic Chrome browser (works for c=WEB / c=MWEB)
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/137.0.0.0 Safari/537.36"
+        ),
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+        "Referer": "https://www.youtube.com/",
+        "Origin": "https://www.youtube.com",
+        "Sec-Fetch-Mode": "no-cors",
+    },
+    {
+        # Last resort: iOS client
+        "User-Agent": (
+            "com.google.ios.youtube/19.29.1 "
+            "(iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
+        ),
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+        "Referer": "https://www.youtube.com/",
+    },
+]
+
+
 def _stream_download(url: str, dest_path: str, timeout: int = 600) -> str:
     """
     Download a remote URL to *dest_path* using chunked streaming.
+
+    googlevideo.com URLs are IP-restricted and require client-matching
+    headers.  We try multiple header sets that correspond to the client
+    types YouTube uses (ANDROID_VR, WEB, iOS).
+
     Returns the absolute path on success.
     """
-    logger.info(f"[Download] Streaming to {dest_path}")
-    resp = requests.get(url, stream=True, timeout=timeout)
-    resp.raise_for_status()
+    last_exc: Exception | None = None
 
-    with open(dest_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
-            if chunk:
-                f.write(chunk)
+    for idx, headers in enumerate(_DOWNLOAD_HEADER_SETS):
+        try:
+            logger.info(
+                f"[Download] Attempt {idx + 1}/{len(_DOWNLOAD_HEADER_SETS)} "
+                f"-> {dest_path}"
+            )
+            resp = requests.get(
+                url, headers=headers, stream=True, timeout=timeout,
+            )
+            resp.raise_for_status()
 
-    file_size_mb = os.path.getsize(dest_path) / (1024 * 1024)
-    logger.info(f"[Download] Saved {dest_path} ({file_size_mb:.1f} MB)")
-    return dest_path
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
+                    if chunk:
+                        f.write(chunk)
+
+            file_size_mb = os.path.getsize(dest_path) / (1024 * 1024)
+            logger.info(f"[Download] Saved {dest_path} ({file_size_mb:.1f} MB)")
+            return dest_path
+
+        except requests.HTTPError as exc:
+            last_exc = exc
+            status = exc.response.status_code if exc.response is not None else "?"
+            logger.warning(
+                f"[Download] Attempt {idx + 1} failed (HTTP {status}), "
+                f"trying next header set…"
+            )
+            # Remove partially written file before retry
+            if os.path.exists(dest_path):
+                os.remove(dest_path)
+            continue
+
+    # All attempts exhausted
+    raise ValueError(
+        f"Failed to download after {len(_DOWNLOAD_HEADER_SETS)} attempts. "
+        f"Last error: {last_exc}"
+    )
 
 
 def _pick_best_audio(formats: list[dict]) -> dict | None:
