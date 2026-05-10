@@ -76,7 +76,7 @@ def _get_base_opts() -> dict:
                 #
                 # web_safari removed: SABR is now enforced for web_safari too (see #12482)
                 # android_vr is the key new addition — bypasses both PO token AND SABR
-                "player_client": ["android", "web"],
+                "player_client": ["android_vr", "mweb", "ios"],
             },
             "youtubepot-bgutilhttp": {
                 "base_url": [BGUTIL_POT_SERVER_URL],
