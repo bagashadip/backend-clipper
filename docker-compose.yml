@@ -26,8 +26,10 @@ services:
     restart: unless-stopped
     environment:
       API_URL: "http://cobalt:9000"
-      # Disable Turnstile challenge (server-to-server usage)
-      # Set COBALT_API_KEY in .env if you want auth
+      # YouTube cookies for authentication (required on datacenter IPs)
+      COOKIE_PATH: "/cookies.json"
+    volumes:
+      - ./cookies.json:/cookies.json:ro
     expose:
       - "9000"
     healthcheck:
