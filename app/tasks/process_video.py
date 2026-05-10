@@ -12,6 +12,68 @@ from app.services.storage import upload_to_s3, check_s3_object_exists, get_s3_ur
 logger = logging.getLogger(__name__)
 
 
+def extract_audio_from_s3_video(s3_key: str, youtube_id: str) -> str:
+    """
+    Download cached source video from S3 and extract audio using FFmpeg.
+
+    Avoids re-downloading from YouTube when the full video is already in S3.
+    Falls back to download_audio() if S3 extraction fails.
+
+    Returns:
+        Local path to extracted .m4a audio file.
+    """
+    import subprocess
+    import tempfile
+
+    output_dir = tempfile.mkdtemp(prefix="clipper_audio_")
+    video_path = os.path.join(output_dir, f"{youtube_id}.mp4")
+    audio_path = os.path.join(output_dir, f"{youtube_id}.m4a")
+
+    try:
+        client = _get_s3_client()
+        from app.config import get_settings
+        settings = get_settings()
+
+        logger.info(f"[S3 Audio] Downloading cached video to extract audio: {s3_key}")
+        client.download_file(settings.aws_s3_bucket, s3_key, video_path)
+
+        # Extract audio with FFmpeg
+        logger.info(f"[S3 Audio] Extracting audio from cached video")
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", video_path,
+                "-vn", "-acodec", "aac", "-b:a", "128k",
+                audio_path,
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"FFmpeg audio extraction failed: {result.stderr[-300:]}")
+
+        # Clean up video file (keep only audio)
+        os.remove(video_path)
+
+        file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+        logger.info(f"[S3 Audio] Extracted audio: {audio_path} ({file_size_mb:.1f} MB)")
+        return audio_path
+
+    except Exception as e:
+        logger.warning(f"[S3 Audio] Failed to extract audio from S3 cache: {e}")
+        # Cleanup on failure
+        for p in [video_path, audio_path]:
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
+        try:
+            if os.path.exists(output_dir):
+                os.rmdir(output_dir)
+        except OSError:
+            pass
+        raise
+
+
 def download_cached_video_from_s3(s3_key: str, youtube_id: str) -> str:
     """
     Download a cached video from S3 to local temp directory.
@@ -189,8 +251,20 @@ def process_video_task(self, video_id: str):
                 db.commit()
                 logger.info(f"[Cache] Stored S3 URL in database: {cached_video_url}")
 
-        # Download audio for transcription (always needed, not cached)
-        audio_path = download_audio(video.youtube_url, video.youtube_id)
+        # Download/extract audio for transcription.
+        # Prefer extracting from S3-cached video to avoid re-hitting YouTube.
+        if cached_video_url and video.storage_url:
+            try:
+                s3_key = f"source_videos/{youtube_id}.mp4"
+                audio_path = extract_audio_from_s3_video(s3_key, youtube_id)
+            except Exception as e:
+                logger.warning(
+                    f"S3 audio extraction failed ({e}), falling back to YouTube download"
+                )
+                audio_path = download_audio(video.youtube_url, video.youtube_id)
+        else:
+            logger.info("No S3 cache available, downloading audio from YouTube")
+            audio_path = download_audio(video.youtube_url, video.youtube_id)
 
         # Step 2: Transcription
         video.status = "transcribing"
