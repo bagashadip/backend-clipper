@@ -146,7 +146,7 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
     # provides separate DASH video+audio streams, not single-file combined
     # formats. FFmpegExtractAudio strips the audio after merge.
     ydl_opts.update({
-        "format": "bestvideo+bestaudio/best",
+        "format": "bestaudio/best",
         "outtmpl": output_template + ".%(ext)s",
         "extract_flat": False,
         "postprocessors": [{
