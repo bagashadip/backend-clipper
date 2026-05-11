@@ -61,15 +61,31 @@ def get_youtube_video_id(url: str) -> str:
 
 # ── Private helpers ────────────────────────────────────────────────────────
 
+def _find_cookies_file() -> str | None:
+    """Find cookies.txt in known locations."""
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "cookies.txt"),
+        "/app/cookies.txt",
+        os.path.expanduser("~/cookies.txt"),
+    ]
+    for path in candidates:
+        resolved = os.path.realpath(path)
+        if os.path.isfile(resolved):
+            logger.info(f"[yt-dlp] Found cookies file: {resolved}")
+            return resolved
+    return None
+
+
 def _build_ydl_opts(
     output_template: str,
     format_spec: str = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
     extra_opts: dict | None = None,
 ) -> dict:
     """
-    Build a yt-dlp options dict with both layers of YouTube bypass:
+    Build a yt-dlp options dict with all layers of YouTube bypass:
       1. Residential proxy  (DOWNLOAD_PROXY_URL)
       2. PO Token via bgutil-provider sidecar
+      3. Cookies from cookies.txt
 
     Args:
         output_template: yt-dlp output path template
@@ -79,8 +95,9 @@ def _build_ydl_opts(
     opts = {
         "format": format_spec,
         "outtmpl": output_template,
-        "quiet": True,
-        "no_warnings": True,
+        "quiet": False,
+        "no_warnings": False,
+        "verbose": True,
         "noprogress": True,
         "merge_output_format": "mp4",
         "postprocessor_args": ["-movflags", "+faststart"],
@@ -101,6 +118,12 @@ def _build_ydl_opts(
     if DOWNLOAD_PROXY_URL:
         opts["proxy"] = DOWNLOAD_PROXY_URL
         logger.info(f"[yt-dlp] Using proxy: {DOWNLOAD_PROXY_URL[:30]}...")
+
+    # Layer 3: Cookies
+    cookies_path = _find_cookies_file()
+    if cookies_path:
+        opts["cookiefile"] = cookies_path
+        logger.info(f"[yt-dlp] Using cookies: {cookies_path}")
 
     # Merge any extra options
     if extra_opts:
