@@ -7,18 +7,18 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# ── RapidAPI YT-API configuration (metadata only) ─────────────────────────
+# ── RapidAPI configuration ─────────────────────────────────────────────────
+# YouTube Media Downloader by DataFanatic — provides both metadata and
+# proxied download URLs through a single endpoint.
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "")
-RAPIDAPI_HOST = "yt-api.p.rapidapi.com"
+RAPIDAPI_HOST = "youtube-media-downloader.p.rapidapi.com"
 RAPIDAPI_BASE = f"https://{RAPIDAPI_HOST}"
-
-# ── Cobalt API configuration (actual downloads) ───────────────────────────
-# Self-hosted Cobalt instance that tunnels/proxies downloads through its
-# own server, eliminating googlevideo.com IP-restriction 403 errors.
-COBALT_API_URL = os.environ.get("COBALT_API_URL", "http://cobalt:9000")
 
 # Chunk size for streaming downloads (1 MB)
 _DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+
+# Retry configuration for transient download failures
+_DOWNLOAD_MAX_RETRIES = 3
 
 
 # ── Public helpers (signatures unchanged) ──────────────────────────────────
@@ -66,7 +66,7 @@ def get_youtube_video_id(url: str) -> str:
 # ── Private helpers ────────────────────────────────────────────────────────
 
 def _get_rapidapi_headers() -> dict:
-    """Return the RapidAPI request headers for metadata calls."""
+    """Return the RapidAPI request headers."""
     if not RAPIDAPI_KEY:
         raise ValueError(
             "RAPIDAPI_KEY environment variable is not set. "
@@ -78,149 +78,175 @@ def _get_rapidapi_headers() -> dict:
     }
 
 
-def _fetch_yt_api_metadata(youtube_id: str) -> dict:
+def _fetch_video_data(youtube_id: str) -> dict:
     """
-    Call YT-API for metadata only (title, duration, thumbnails, formats list).
-    We use this for extract_metadata() since it's a lightweight JSON call.
+    Call YouTube Media Downloader API for full video data including
+    metadata, download URLs (videos + audios), thumbnails, and subtitles.
+
+    This single call replaces both the old YT-API metadata call and
+    the Cobalt download request.
     """
-    url = f"{RAPIDAPI_BASE}/dl"
-    params = {"id": youtube_id}
+    url = f"{RAPIDAPI_BASE}/v2/video/details"
+    params = {"videoId": youtube_id}
     headers = _get_rapidapi_headers()
 
-    logger.info(f"[YT-API] Fetching metadata for {youtube_id}")
+    logger.info(f"[YT-DL API] Fetching video data for {youtube_id}")
 
     resp = requests.get(url, headers=headers, params=params, timeout=30)
 
     if resp.status_code == 429:
         raise ValueError("RapidAPI rate limit exceeded. Check your subscription quota.")
     if resp.status_code != 200:
-        raise ValueError(f"YT-API returned HTTP {resp.status_code}: {resp.text[:300]}")
+        raise ValueError(f"YT-DL API returned HTTP {resp.status_code}: {resp.text[:300]}")
 
     data = resp.json()
-    if data.get("status") == "fail" or data.get("error"):
-        err_msg = data.get("error") or data.get("message") or "Unknown API error"
-        raise ValueError(f"YT-API error for {youtube_id}: {err_msg}")
+
+    # Check for API-level errors
+    error_id = data.get("errorId", "")
+    if error_id and error_id not in ("Success", "None", "0", "", None):
+        raise ValueError(f"YT-DL API error for {youtube_id}: errorId={error_id}")
 
     return data
 
 
-def _cobalt_request(youtube_url: str, **kwargs) -> dict:
+def _pick_video_url(data: dict, quality: str = "1080p") -> tuple[str, bool]:
     """
-    POST to the self-hosted Cobalt API. Cobalt downloads from YouTube on
-    its own server and returns a tunnel URL that proxies the file content
-    through Cobalt — no IP-restriction issues.
+    Select the best video download URL from the API response.
 
-    kwargs are merged into the JSON body (downloadMode, videoQuality, etc).
+    Preference order:
+      1. MP4 with audio at the requested quality (no merge needed)
+      2. MP4 video-only at the requested quality (needs audio merge)
+      3. Any format at the requested quality
+      4. Best available below the requested quality
+
+    Returns:
+        (url, has_audio) — the download URL and whether it includes audio.
     """
-    body = {
-        "url": youtube_url,
-        "youtubeVideoCodec": "h264",
-        **kwargs,
-    }
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
+    QUALITY_ORDER = ["2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
 
-    # If Cobalt requires auth, pass it
-    cobalt_api_key = os.environ.get("COBALT_API_KEY", "")
-    if cobalt_api_key:
-        headers["Authorization"] = f"Api-Key {cobalt_api_key}"
+    videos_data = data.get("videos", {})
+    items = videos_data.get("items", [])
 
-    logger.info(f"[Cobalt] POST {COBALT_API_URL} body={body}")
+    if not items:
+        raise ValueError("No video streams available from API")
 
-    resp = requests.post(COBALT_API_URL, json=body, headers=headers, timeout=60)
+    # Parse target quality height
+    target_height = int(quality.replace("p", "")) if quality != "best" else 99999
 
-    if resp.status_code == 429:
-        raise ValueError("Cobalt rate limit exceeded. Try again later.")
-    if resp.status_code != 200:
-        raise ValueError(f"Cobalt returned HTTP {resp.status_code}: {resp.text[:300]}")
+    # Group by quality
+    by_quality: dict[str, list] = {}
+    for item in items:
+        q = item.get("quality", "")
+        by_quality.setdefault(q, []).append(item)
 
-    data = resp.json()
+    # Try to find exact match first
+    target_q = f"{target_height}p" if quality != "best" else None
 
-    status = data.get("status")
-    if status == "error":
-        err = data.get("error", {})
-        code = err.get("code", "unknown") if isinstance(err, dict) else str(err)
-        raise ValueError(f"Cobalt error: {code}")
+    def _find_at_quality(q_label: str) -> tuple[str, bool] | None:
+        candidates = by_quality.get(q_label, [])
+        # Prefer MP4 with audio
+        for c in candidates:
+            if c.get("extension") == "mp4" and c.get("hasAudio"):
+                return (c["url"], True)
+        # Then MP4 video-only
+        for c in candidates:
+            if c.get("extension") == "mp4" and not c.get("hasAudio"):
+                return (c["url"], False)
+        # Then any format
+        for c in candidates:
+            if c.get("url"):
+                return (c["url"], bool(c.get("hasAudio")))
+        return None
 
-    return data
+    if quality == "best":
+        # Try highest quality first
+        for q in QUALITY_ORDER:
+            result = _find_at_quality(q)
+            if result:
+                logger.info(f"[Pick Video] Selected {q} (hasAudio={result[1]})")
+                return result
+    else:
+        # Try exact match
+        result = _find_at_quality(target_q)
+        if result:
+            logger.info(f"[Pick Video] Selected exact {target_q} (hasAudio={result[1]})")
+            return result
+
+        # Try lower qualities as fallback
+        idx = QUALITY_ORDER.index(target_q) if target_q in QUALITY_ORDER else 0
+        for q in QUALITY_ORDER[idx:]:
+            result = _find_at_quality(q)
+            if result:
+                logger.info(f"[Pick Video] Fallback to {q} (hasAudio={result[1]})")
+                return result
+
+    # Last resort: first item with a URL
+    for item in items:
+        if item.get("url"):
+            return (item["url"], bool(item.get("hasAudio")))
+
+    raise ValueError("No downloadable video stream found")
+
+
+def _pick_audio_url(data: dict) -> str:
+    """
+    Select the best audio download URL from the API response.
+    Prefers m4a (AAC) for Whisper compatibility, then any available.
+    """
+    audios_data = data.get("audios", {})
+    items = audios_data.get("items", [])
+
+    if not items:
+        raise ValueError("No audio streams available from API")
+
+    # Prefer m4a (AAC)
+    for item in items:
+        if item.get("extension") == "m4a" and item.get("url"):
+            logger.info("[Pick Audio] Selected m4a stream")
+            return item["url"]
+
+    # Fallback: any audio with a URL
+    for item in items:
+        if item.get("url"):
+            logger.info(f"[Pick Audio] Selected {item.get('extension', '?')} stream")
+            return item["url"]
+
+    raise ValueError("No downloadable audio stream found")
 
 
 def _stream_download(url: str, dest_path: str, timeout: int = 600) -> str:
     """
-    Download a URL to *dest_path* using chunked streaming.
-    Works with both Cobalt tunnel URLs and regular CDN URLs.
+    Download a URL to *dest_path* using chunked streaming with retry logic.
     """
-    logger.info(f"[Download] Streaming to {dest_path}")
+    last_error = None
 
-    resp = requests.get(url, stream=True, timeout=timeout)
-    resp.raise_for_status()
+    for attempt in range(1, _DOWNLOAD_MAX_RETRIES + 1):
+        try:
+            logger.info(f"[Download] Streaming to {dest_path} (attempt {attempt})")
 
-    with open(dest_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
-            if chunk:
-                f.write(chunk)
+            resp = requests.get(url, stream=True, timeout=timeout)
+            resp.raise_for_status()
 
-    file_size_mb = os.path.getsize(dest_path) / (1024 * 1024)
-    logger.info(f"[Download] Saved {dest_path} ({file_size_mb:.1f} MB)")
-    return dest_path
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
+                    if chunk:
+                        f.write(chunk)
 
-
-def _cobalt_download(youtube_url: str, dest_path: str, **kwargs) -> str:
-    """
-    Full pipeline: call Cobalt → get tunnel/redirect URL → stream to file.
-    """
-    data = _cobalt_request(youtube_url, **kwargs)
-    status = data.get("status")
-
-    if status in ("tunnel", "redirect"):
-        tunnel_url = data.get("url")
-        if not tunnel_url:
-            raise ValueError(f"Cobalt returned {status} but no URL")
-        return _stream_download(tunnel_url, dest_path)
-
-    elif status == "picker":
-        # Multiple items — pick the first video/audio
-        items = data.get("picker", [])
-        if not items:
-            raise ValueError("Cobalt picker returned no items")
-        tunnel_url = items[0].get("url")
-        if not tunnel_url:
-            raise ValueError("Cobalt picker item has no URL")
-        return _stream_download(tunnel_url, dest_path)
-
-    elif status == "local-processing":
-        # Cobalt wants us to merge locally — download tunnel files and merge
-        tunnels = data.get("tunnel", [])
-        proc_type = data.get("type", "")
-
-        if len(tunnels) == 1 or proc_type == "audio":
-            return _stream_download(tunnels[0], dest_path)
-
-        if len(tunnels) >= 2 and proc_type == "merge":
-            # Download video and audio separately, then merge
-            output_dir = os.path.dirname(dest_path)
-            video_tmp = os.path.join(output_dir, "_v.tmp")
-            audio_tmp = os.path.join(output_dir, "_a.tmp")
-
-            _stream_download(tunnels[0], video_tmp)
-            _stream_download(tunnels[1], audio_tmp)
-
-            _merge_av(video_tmp, audio_tmp, dest_path)
-
-            os.remove(video_tmp)
-            os.remove(audio_tmp)
+            file_size_mb = os.path.getsize(dest_path) / (1024 * 1024)
+            logger.info(f"[Download] Saved {dest_path} ({file_size_mb:.1f} MB)")
             return dest_path
 
-        # Fallback: just download first tunnel
-        if tunnels:
-            return _stream_download(tunnels[0], dest_path)
+        except Exception as e:
+            last_error = e
+            logger.warning(f"[Download] Attempt {attempt} failed: {e}")
+            if attempt < _DOWNLOAD_MAX_RETRIES:
+                import time
+                time.sleep(2 * attempt)
 
-        raise ValueError(f"Cobalt local-processing has no tunnel URLs")
-
-    else:
-        raise ValueError(f"Unexpected Cobalt status: {status}")
+    raise ValueError(
+        f"Failed to download after {_DOWNLOAD_MAX_RETRIES} attempts. "
+        f"Last error: {last_error}"
+    )
 
 
 def _merge_av(video_path: str, audio_path: str, output_path: str) -> str:
@@ -249,6 +275,50 @@ def _seconds_to_timestamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 
+def _download_video_with_audio(
+    data: dict,
+    dest_path: str,
+    quality: str = "1080p",
+) -> str:
+    """
+    Download video from the API response data. If the selected stream
+    has no audio, automatically downloads audio separately and merges.
+
+    Args:
+        data: Full API response from _fetch_video_data()
+        dest_path: Where to save the final mp4
+        quality: Target quality string
+
+    Returns:
+        Path to the downloaded (and possibly merged) video file
+    """
+    video_url, has_audio = _pick_video_url(data, quality)
+
+    if has_audio:
+        # Stream already has audio — download directly
+        return _stream_download(video_url, dest_path)
+
+    # Video-only: need to download audio separately and merge
+    output_dir = os.path.dirname(dest_path)
+    video_tmp = os.path.join(output_dir, "_video_tmp.mp4")
+    audio_tmp = os.path.join(output_dir, "_audio_tmp.m4a")
+
+    try:
+        audio_url = _pick_audio_url(data)
+
+        _stream_download(video_url, video_tmp)
+        _stream_download(audio_url, audio_tmp)
+
+        _merge_av(video_tmp, audio_tmp, dest_path)
+
+        return dest_path
+    finally:
+        # Clean up temp files
+        for tmp in [video_tmp, audio_tmp]:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+
 # ── Public API (signatures preserved exactly) ─────────────────────────────
 
 def check_video_duration(youtube_url: str) -> int:
@@ -263,10 +333,10 @@ def check_video_duration(youtube_url: str) -> int:
 def extract_metadata(youtube_url: str) -> dict:
     """Extract video metadata without downloading."""
     youtube_id = get_youtube_video_id(youtube_url)
-    data = _fetch_yt_api_metadata(youtube_id)
+    data = _fetch_video_data(youtube_id)
 
-    # Parse duration — API may return seconds (int) or ISO 8601 string
-    raw_duration = data.get("lengthSeconds") or data.get("duration", 0)
+    # Parse duration
+    raw_duration = data.get("lengthSeconds", 0)
     if isinstance(raw_duration, str):
         try:
             raw_duration = int(raw_duration)
@@ -274,16 +344,21 @@ def extract_metadata(youtube_url: str) -> dict:
             raw_duration = 0
     duration = int(raw_duration)
 
-    # Find the highest available video height across all formats
-    all_formats = data.get("adaptiveFormats", []) + data.get("formats", [])
+    # Find the highest available video height
+    videos_data = data.get("videos", {})
+    video_items = videos_data.get("items", []) if isinstance(videos_data, dict) else []
     max_height: int | None = None
-    for fmt in all_formats:
-        h = fmt.get("height")
-        if h and isinstance(h, (int, float)) and int(h) > (max_height or 0):
-            max_height = int(h)
+    for item in video_items:
+        q = item.get("quality", "")
+        # Parse "1080p" -> 1080
+        match = re.match(r"(\d+)p", q)
+        if match:
+            h = int(match.group(1))
+            if h > (max_height or 0):
+                max_height = h
 
     # Pick best thumbnail
-    thumbnails = data.get("thumbnail", data.get("thumbnails", []))
+    thumbnails = data.get("thumbnails", [])
     thumb_url = ""
     if isinstance(thumbnails, list) and thumbnails:
         best = max(thumbnails, key=lambda t: t.get("width", 0) * t.get("height", 0))
@@ -291,11 +366,19 @@ def extract_metadata(youtube_url: str) -> dict:
     elif isinstance(thumbnails, str):
         thumb_url = thumbnails
 
+    # Channel info
+    channel = data.get("channel", {})
+    uploader = ""
+    if isinstance(channel, dict):
+        uploader = channel.get("name", "")
+    elif isinstance(channel, str):
+        uploader = channel
+
     return {
         "title": data.get("title", ""),
         "duration": duration,
         "thumbnail": thumb_url,
-        "uploader": data.get("channelTitle", data.get("uploader", "")),
+        "uploader": uploader,
         "max_source_height": max_height,
     }
 
@@ -306,17 +389,13 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
     raw_path = os.path.join(output_dir, f"{youtube_id}.m4a")
 
     try:
-        _cobalt_download(
-            youtube_url,
-            raw_path,
-            downloadMode="audio",
-            audioFormat="best",
-        )
+        data = _fetch_video_data(youtube_id)
+        audio_url = _pick_audio_url(data)
+        _stream_download(audio_url, raw_path)
     except Exception as e:
         raise ValueError(f"Failed to download audio: {e}")
 
     # Ensure output is m4a (AAC) for Whisper compatibility
-    # Cobalt may return opus/webm; convert if needed
     m4a_path = os.path.join(output_dir, f"{youtube_id}_final.m4a")
 
     if raw_path.endswith(".m4a") and os.path.exists(raw_path):
@@ -359,27 +438,15 @@ def download_video_segment(
     (no upper limit) to ensure we get the highest quality source for vertical crops.
     For standard qualities (480p, 720p, 1080p), we cap at the requested height.
     """
-    QUALITY_MAP = {
-        "best": "max",
-        "480p": "480",
-        "720p": "720",
-        "1080p": "1080",
-        "1440p": "1440",
-        "2160p": "2160",
-    }
-    cobalt_quality = QUALITY_MAP.get(quality, "1080")
+    youtube_id = get_youtube_video_id(youtube_url)
 
     output_dir = tempfile.mkdtemp(prefix="clipper_segment_")
     full_path = os.path.join(output_dir, "full.mp4")
     output_path = os.path.join(output_dir, "segment.mp4")
 
     try:
-        _cobalt_download(
-            youtube_url,
-            full_path,
-            downloadMode="auto",
-            videoQuality=cobalt_quality,
-        )
+        data = _fetch_video_data(youtube_id)
+        _download_video_with_audio(data, full_path, quality)
     except Exception as e:
         raise ValueError(f"Failed to download video segment: {e}")
 
@@ -432,28 +499,14 @@ def download_full_video(
     Returns:
         Path to the downloaded video file
     """
-    QUALITY_MAP = {
-        "best": "max",
-        "480p": "480",
-        "720p": "720",
-        "1080p": "1080",
-        "1440p": "1440",
-        "2160p": "2160",
-    }
-    cobalt_quality = QUALITY_MAP.get(quality, "1080")
-
     output_dir = tempfile.mkdtemp(prefix="clipper_full_")
     output_path = os.path.join(output_dir, f"{youtube_id}.mp4")
 
     logger.info(f"[Cache] Downloading full video: {youtube_id} at quality={quality}")
 
     try:
-        _cobalt_download(
-            youtube_url,
-            output_path,
-            downloadMode="auto",
-            videoQuality=cobalt_quality,
-        )
+        data = _fetch_video_data(youtube_id)
+        _download_video_with_audio(data, output_path, quality)
     except Exception as e:
         raise ValueError(f"Failed to download full video: {e}")
 
