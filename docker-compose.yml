@@ -50,6 +50,14 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── bgutil PO Token provider (generates YouTube proof-of-origin tokens) ──
+  bgutil-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider
+    restart: unless-stopped
+    init: true
+    ports:
+      - "4416:4416"
+
   # ── FastAPI API server (CPU — no GPU needed) ──────────────────────────────
   api:
     build:
@@ -62,6 +70,8 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
       HF_HOME: /app/.cache/huggingface
+      DOWNLOAD_PROXY_URL: ${DOWNLOAD_PROXY_URL}
+      BGUTIL_PROVIDER_URL: http://bgutil-provider:4416
     ports:
       - "8000:8000"
     volumes:
@@ -98,6 +108,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       HF_HOME: /app/.cache/huggingface
       TRITON_CACHE_DIR: /tmp/.triton
+      DOWNLOAD_PROXY_URL: ${DOWNLOAD_PROXY_URL}
+      BGUTIL_PROVIDER_URL: http://bgutil-provider:4416
     volumes:
       - whisper_cache:/app/.cache/huggingface
     depends_on:

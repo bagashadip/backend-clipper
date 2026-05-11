@@ -3,22 +3,18 @@ import subprocess
 import logging
 import tempfile
 import re
-import requests
+import yt_dlp
 
 logger = logging.getLogger(__name__)
 
-# ── RapidAPI configuration ─────────────────────────────────────────────────
-# YouTube Media Downloader by DataFanatic — provides both metadata and
-# proxied download URLs through a single endpoint.
-RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "")
-RAPIDAPI_HOST = "youtube-media-downloader.p.rapidapi.com"
-RAPIDAPI_BASE = f"https://{RAPIDAPI_HOST}"
+# ── Configuration ──────────────────────────────────────────────────────────
+# Residential proxy URL for bypassing YouTube IP blocks on GCP
+DOWNLOAD_PROXY_URL = os.environ.get("DOWNLOAD_PROXY_URL", "")
 
-# Chunk size for streaming downloads (1 MB)
-_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
-
-# Retry configuration for transient download failures
-_DOWNLOAD_MAX_RETRIES = 3
+# bgutil PO Token provider (runs as a sidecar container)
+BGUTIL_PROVIDER_URL = os.environ.get(
+    "BGUTIL_PROVIDER_URL", "http://bgutil-provider:4416"
+)
 
 
 # ── Public helpers (signatures unchanged) ──────────────────────────────────
@@ -65,207 +61,52 @@ def get_youtube_video_id(url: str) -> str:
 
 # ── Private helpers ────────────────────────────────────────────────────────
 
-def _get_rapidapi_headers() -> dict:
-    """Return the RapidAPI request headers."""
-    if not RAPIDAPI_KEY:
-        raise ValueError(
-            "RAPIDAPI_KEY environment variable is not set. "
-            "Add it to your .env / docker-compose environment."
-        )
-    return {
-        "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": RAPIDAPI_HOST,
+def _build_ydl_opts(
+    output_template: str,
+    format_spec: str = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    extra_opts: dict | None = None,
+) -> dict:
+    """
+    Build a yt-dlp options dict with both layers of YouTube bypass:
+      1. Residential proxy  (DOWNLOAD_PROXY_URL)
+      2. PO Token via bgutil-provider sidecar
+
+    Args:
+        output_template: yt-dlp output path template
+        format_spec: yt-dlp format selector string
+        extra_opts: additional ydl_opts to merge in
+    """
+    opts = {
+        "format": format_spec,
+        "outtmpl": output_template,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "merge_output_format": "mp4",
+        "postprocessor_args": ["-movflags", "+faststart"],
+        # Let yt-dlp handle retries
+        "retries": 3,
+        "fragment_retries": 3,
+        # Extractor args: use web client + bgutil PO token provider
+        "extractor_args": {
+            "youtube": {
+                "player-client": ["web", "default"],
+                # Point the bgutil HTTP provider to our sidecar container
+                "youtubepot-bgutilhttp:base_url": [BGUTIL_PROVIDER_URL],
+            },
+        },
     }
 
+    # Layer 1: Residential proxy
+    if DOWNLOAD_PROXY_URL:
+        opts["proxy"] = DOWNLOAD_PROXY_URL
+        logger.info(f"[yt-dlp] Using proxy: {DOWNLOAD_PROXY_URL[:30]}...")
 
-def _fetch_video_data(youtube_id: str) -> dict:
-    """
-    Call YouTube Media Downloader API for full video data including
-    metadata, download URLs (videos + audios), thumbnails, and subtitles.
+    # Merge any extra options
+    if extra_opts:
+        opts.update(extra_opts)
 
-    This single call replaces both the old YT-API metadata call and
-    the Cobalt download request.
-    """
-    url = f"{RAPIDAPI_BASE}/v2/video/details"
-    params = {"videoId": youtube_id}
-    headers = _get_rapidapi_headers()
-
-    logger.info(f"[YT-DL API] Fetching video data for {youtube_id}")
-
-    resp = requests.get(url, headers=headers, params=params, timeout=30)
-
-    if resp.status_code == 429:
-        raise ValueError("RapidAPI rate limit exceeded. Check your subscription quota.")
-    if resp.status_code != 200:
-        raise ValueError(f"YT-DL API returned HTTP {resp.status_code}: {resp.text[:300]}")
-
-    data = resp.json()
-
-    # Check for API-level errors
-    error_id = data.get("errorId", "")
-    if error_id and error_id not in ("Success", "None", "0", "", None):
-        raise ValueError(f"YT-DL API error for {youtube_id}: errorId={error_id}")
-
-    return data
-
-
-def _pick_video_url(data: dict, quality: str = "1080p") -> tuple[str, bool]:
-    """
-    Select the best video download URL from the API response.
-
-    Preference order:
-      1. MP4 with audio at the requested quality (no merge needed)
-      2. MP4 video-only at the requested quality (needs audio merge)
-      3. Any format at the requested quality
-      4. Best available below the requested quality
-
-    Returns:
-        (url, has_audio) — the download URL and whether it includes audio.
-    """
-    QUALITY_ORDER = ["2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
-
-    videos_data = data.get("videos", {})
-    items = videos_data.get("items", [])
-
-    if not items:
-        raise ValueError("No video streams available from API")
-
-    # Parse target quality height
-    target_height = int(quality.replace("p", "")) if quality != "best" else 99999
-
-    # Group by quality
-    by_quality: dict[str, list] = {}
-    for item in items:
-        q = item.get("quality", "")
-        by_quality.setdefault(q, []).append(item)
-
-    # Try to find exact match first
-    target_q = f"{target_height}p" if quality != "best" else None
-
-    def _find_at_quality(q_label: str) -> tuple[str, bool] | None:
-        candidates = by_quality.get(q_label, [])
-        # Prefer MP4 with audio
-        for c in candidates:
-            if c.get("extension") == "mp4" and c.get("hasAudio"):
-                return (c["url"], True)
-        # Then MP4 video-only
-        for c in candidates:
-            if c.get("extension") == "mp4" and not c.get("hasAudio"):
-                return (c["url"], False)
-        # Then any format
-        for c in candidates:
-            if c.get("url"):
-                return (c["url"], bool(c.get("hasAudio")))
-        return None
-
-    if quality == "best":
-        # Try highest quality first
-        for q in QUALITY_ORDER:
-            result = _find_at_quality(q)
-            if result:
-                logger.info(f"[Pick Video] Selected {q} (hasAudio={result[1]})")
-                return result
-    else:
-        # Try exact match
-        result = _find_at_quality(target_q)
-        if result:
-            logger.info(f"[Pick Video] Selected exact {target_q} (hasAudio={result[1]})")
-            return result
-
-        # Try lower qualities as fallback
-        idx = QUALITY_ORDER.index(target_q) if target_q in QUALITY_ORDER else 0
-        for q in QUALITY_ORDER[idx:]:
-            result = _find_at_quality(q)
-            if result:
-                logger.info(f"[Pick Video] Fallback to {q} (hasAudio={result[1]})")
-                return result
-
-    # Last resort: first item with a URL
-    for item in items:
-        if item.get("url"):
-            return (item["url"], bool(item.get("hasAudio")))
-
-    raise ValueError("No downloadable video stream found")
-
-
-def _pick_audio_url(data: dict) -> str:
-    """
-    Select the best audio download URL from the API response.
-    Prefers m4a (AAC) for Whisper compatibility, then any available.
-    """
-    audios_data = data.get("audios", {})
-    items = audios_data.get("items", [])
-
-    if not items:
-        raise ValueError("No audio streams available from API")
-
-    # Prefer m4a (AAC)
-    for item in items:
-        if item.get("extension") == "m4a" and item.get("url"):
-            logger.info("[Pick Audio] Selected m4a stream")
-            return item["url"]
-
-    # Fallback: any audio with a URL
-    for item in items:
-        if item.get("url"):
-            logger.info(f"[Pick Audio] Selected {item.get('extension', '?')} stream")
-            return item["url"]
-
-    raise ValueError("No downloadable audio stream found")
-
-
-def _stream_download(url: str, dest_path: str, timeout: int = 600) -> str:
-    """
-    Download a URL to *dest_path* using chunked streaming with retry logic.
-    """
-    last_error = None
-
-    for attempt in range(1, _DOWNLOAD_MAX_RETRIES + 1):
-        try:
-            logger.info(f"[Download] Streaming to {dest_path} (attempt {attempt})")
-
-            resp = requests.get(url, stream=True, timeout=timeout)
-            resp.raise_for_status()
-
-            with open(dest_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
-                    if chunk:
-                        f.write(chunk)
-
-            file_size_mb = os.path.getsize(dest_path) / (1024 * 1024)
-            logger.info(f"[Download] Saved {dest_path} ({file_size_mb:.1f} MB)")
-            return dest_path
-
-        except Exception as e:
-            last_error = e
-            logger.warning(f"[Download] Attempt {attempt} failed: {e}")
-            if attempt < _DOWNLOAD_MAX_RETRIES:
-                import time
-                time.sleep(2 * attempt)
-
-    raise ValueError(
-        f"Failed to download after {_DOWNLOAD_MAX_RETRIES} attempts. "
-        f"Last error: {last_error}"
-    )
-
-
-def _merge_av(video_path: str, audio_path: str, output_path: str) -> str:
-    """Mux separate video + audio files into a single mp4 with FFmpeg."""
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-i", audio_path,
-        "-c:v", "copy",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-        output_path,
-    ]
-    logger.info(f"[FFmpeg] Merging video+audio -> {output_path}")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg merge failed: {result.stderr[-500:]}")
-    return output_path
+    return opts
 
 
 def _seconds_to_timestamp(seconds: float) -> str:
@@ -273,50 +114,6 @@ def _seconds_to_timestamp(seconds: float) -> str:
     m = int((seconds % 3600) // 60)
     s = seconds % 60
     return f"{h:02d}:{m:02d}:{s:06.3f}"
-
-
-def _download_video_with_audio(
-    data: dict,
-    dest_path: str,
-    quality: str = "1080p",
-) -> str:
-    """
-    Download video from the API response data. If the selected stream
-    has no audio, automatically downloads audio separately and merges.
-
-    Args:
-        data: Full API response from _fetch_video_data()
-        dest_path: Where to save the final mp4
-        quality: Target quality string
-
-    Returns:
-        Path to the downloaded (and possibly merged) video file
-    """
-    video_url, has_audio = _pick_video_url(data, quality)
-
-    if has_audio:
-        # Stream already has audio — download directly
-        return _stream_download(video_url, dest_path)
-
-    # Video-only: need to download audio separately and merge
-    output_dir = os.path.dirname(dest_path)
-    video_tmp = os.path.join(output_dir, "_video_tmp.mp4")
-    audio_tmp = os.path.join(output_dir, "_audio_tmp.m4a")
-
-    try:
-        audio_url = _pick_audio_url(data)
-
-        _stream_download(video_url, video_tmp)
-        _stream_download(audio_url, audio_tmp)
-
-        _merge_av(video_tmp, audio_tmp, dest_path)
-
-        return dest_path
-    finally:
-        # Clean up temp files
-        for tmp in [video_tmp, audio_tmp]:
-            if os.path.exists(tmp):
-                os.remove(tmp)
 
 
 # ── Public API (signatures preserved exactly) ─────────────────────────────
@@ -333,52 +130,50 @@ def check_video_duration(youtube_url: str) -> int:
 def extract_metadata(youtube_url: str) -> dict:
     """Extract video metadata without downloading."""
     youtube_id = get_youtube_video_id(youtube_url)
-    data = _fetch_video_data(youtube_id)
+
+    opts = _build_ydl_opts(
+        output_template="/dev/null",
+        extra_opts={
+            "skip_download": True,
+        },
+    )
+
+    logger.info(f"[yt-dlp] Extracting metadata for {youtube_id}")
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+    except Exception as e:
+        raise ValueError(f"Failed to extract metadata: {e}")
+
+    if not info:
+        raise ValueError(f"No metadata returned for {youtube_url}")
 
     # Parse duration
-    raw_duration = data.get("lengthSeconds", 0)
-    if isinstance(raw_duration, str):
-        try:
-            raw_duration = int(raw_duration)
-        except ValueError:
-            raw_duration = 0
-    duration = int(raw_duration)
+    duration = int(info.get("duration", 0) or 0)
 
     # Find the highest available video height
-    videos_data = data.get("videos", {})
-    video_items = videos_data.get("items", []) if isinstance(videos_data, dict) else []
     max_height: int | None = None
-    for item in video_items:
-        q = item.get("quality", "")
-        # Parse "1080p" -> 1080
-        match = re.match(r"(\d+)p", q)
-        if match:
-            h = int(match.group(1))
-            if h > (max_height or 0):
-                max_height = h
+    formats = info.get("formats", [])
+    for fmt in formats:
+        h = fmt.get("height")
+        if h and isinstance(h, (int, float)) and int(h) > (max_height or 0):
+            max_height = int(h)
 
     # Pick best thumbnail
-    thumbnails = data.get("thumbnails", [])
+    thumbnails = info.get("thumbnails", [])
     thumb_url = ""
     if isinstance(thumbnails, list) and thumbnails:
         best = max(thumbnails, key=lambda t: t.get("width", 0) * t.get("height", 0))
         thumb_url = best.get("url", "")
-    elif isinstance(thumbnails, str):
-        thumb_url = thumbnails
-
-    # Channel info
-    channel = data.get("channel", {})
-    uploader = ""
-    if isinstance(channel, dict):
-        uploader = channel.get("name", "")
-    elif isinstance(channel, str):
-        uploader = channel
+    elif info.get("thumbnail"):
+        thumb_url = info["thumbnail"]
 
     return {
-        "title": data.get("title", ""),
+        "title": info.get("title", ""),
         "duration": duration,
         "thumbnail": thumb_url,
-        "uploader": uploader,
+        "uploader": info.get("uploader", info.get("channel", "")),
         "max_source_height": max_height,
     }
 
@@ -386,44 +181,58 @@ def extract_metadata(youtube_url: str) -> dict:
 def download_audio(youtube_url: str, youtube_id: str) -> str:
     """Download audio only from a YouTube video. Returns the file path."""
     output_dir = tempfile.mkdtemp(prefix="clipper_")
-    raw_path = os.path.join(output_dir, f"{youtube_id}.m4a")
+    output_template = os.path.join(output_dir, f"{youtube_id}.%(ext)s")
+
+    opts = _build_ydl_opts(
+        output_template=output_template,
+        format_spec="bestaudio[ext=m4a]/bestaudio/best",
+        extra_opts={
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "m4a",
+                "preferredquality": "128",
+            }],
+        },
+    )
+
+    logger.info(f"[yt-dlp] Downloading audio for {youtube_id}")
 
     try:
-        data = _fetch_video_data(youtube_id)
-        audio_url = _pick_audio_url(data)
-        _stream_download(audio_url, raw_path)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([youtube_url])
     except Exception as e:
         raise ValueError(f"Failed to download audio: {e}")
 
-    # Ensure output is m4a (AAC) for Whisper compatibility
-    m4a_path = os.path.join(output_dir, f"{youtube_id}_final.m4a")
+    # Find the downloaded audio file
+    for f in os.listdir(output_dir):
+        if f.endswith((".m4a", ".mp3", ".opus", ".webm", ".ogg", ".wav")):
+            audio_path = os.path.join(output_dir, f)
+            logger.info(f"[Audio] Downloaded: {audio_path}")
 
-    if raw_path.endswith(".m4a") and os.path.exists(raw_path):
-        # Check if it's actually AAC by probing
-        probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", raw_path],
-            capture_output=True, text=True, timeout=30,
-        )
-        if "aac" in probe.stdout.lower() or "mp4a" in probe.stdout.lower():
-            logger.info(f"[Audio] Downloaded AAC audio: {raw_path}")
-            return raw_path
+            # If it's already m4a, return directly
+            if f.endswith(".m4a"):
+                return audio_path
 
-    # Convert to m4a/AAC
-    cmd = [
-        "ffmpeg", "-y", "-i", raw_path,
-        "-vn", "-acodec", "aac", "-b:a", "128k",
-        m4a_path,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-    if result.returncode != 0:
-        # If conversion fails, return raw file (Whisper can handle many formats)
-        logger.warning(f"[Audio] FFmpeg conversion failed, using raw: {result.stderr[-200:]}")
-        return raw_path
+            # Convert to m4a/AAC for Whisper compatibility
+            m4a_path = os.path.join(output_dir, f"{youtube_id}_final.m4a")
+            cmd = [
+                "ffmpeg", "-y", "-i", audio_path,
+                "-vn", "-acodec", "aac", "-b:a", "128k",
+                m4a_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                logger.warning(
+                    f"[Audio] FFmpeg conversion failed, using raw: "
+                    f"{result.stderr[-200:]}"
+                )
+                return audio_path
 
-    os.remove(raw_path)
-    logger.info(f"[Audio] Converted to AAC: {m4a_path}")
-    return m4a_path
+            os.remove(audio_path)
+            logger.info(f"[Audio] Converted to AAC: {m4a_path}")
+            return m4a_path
+
+    raise FileNotFoundError(f"Audio file not found after download in {output_dir}")
 
 
 def download_video_segment(
@@ -439,16 +248,33 @@ def download_video_segment(
     For standard qualities (480p, 720p, 1080p), we cap at the requested height.
     """
     youtube_id = get_youtube_video_id(youtube_url)
+    format_spec = _quality_to_format(quality)
 
     output_dir = tempfile.mkdtemp(prefix="clipper_segment_")
     full_path = os.path.join(output_dir, "full.mp4")
     output_path = os.path.join(output_dir, "segment.mp4")
 
+    # Download the full video first
+    opts = _build_ydl_opts(
+        output_template=full_path,
+        format_spec=format_spec,
+    )
+
+    logger.info(
+        f"[yt-dlp] Downloading video {youtube_id} at {quality} for segment "
+        f"{start_time:.1f}-{end_time:.1f}s"
+    )
+
     try:
-        data = _fetch_video_data(youtube_id)
-        _download_video_with_audio(data, full_path, quality)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([youtube_url])
     except Exception as e:
         raise ValueError(f"Failed to download video segment: {e}")
+
+    # yt-dlp may append an extension — find the actual file
+    actual_full = _find_downloaded_file(output_dir, "full")
+    if not actual_full:
+        raise FileNotFoundError("Downloaded video not found after yt-dlp")
 
     # Cut segment with FFmpeg
     logger.info(
@@ -458,7 +284,7 @@ def download_video_segment(
         "ffmpeg", "-y",
         "-ss", str(start_time),
         "-to", str(end_time),
-        "-i", full_path,
+        "-i", actual_full,
         "-c", "copy",
         "-movflags", "+faststart",
         output_path,
@@ -467,7 +293,7 @@ def download_video_segment(
     if result.returncode != 0:
         raise ValueError(f"FFmpeg segment cut failed: {result.stderr[-300:]}")
 
-    os.remove(full_path)
+    os.remove(actual_full)
 
     if os.path.exists(output_path):
         return output_path
@@ -499,27 +325,65 @@ def download_full_video(
     Returns:
         Path to the downloaded video file
     """
+    format_spec = _quality_to_format(quality)
+
     output_dir = tempfile.mkdtemp(prefix="clipper_full_")
     output_path = os.path.join(output_dir, f"{youtube_id}.mp4")
 
-    logger.info(f"[Cache] Downloading full video: {youtube_id} at quality={quality}")
+    opts = _build_ydl_opts(
+        output_template=output_path,
+        format_spec=format_spec,
+    )
+
+    logger.info(f"[yt-dlp] Downloading full video: {youtube_id} at quality={quality}")
 
     try:
-        data = _fetch_video_data(youtube_id)
-        _download_video_with_audio(data, output_path, quality)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([youtube_url])
     except Exception as e:
         raise ValueError(f"Failed to download full video: {e}")
 
+    # yt-dlp may change the extension — find the actual file
     if os.path.exists(output_path):
         file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-        logger.info(f"[Cache] Downloaded full video: {output_path} ({file_size_mb:.1f} MB)")
+        logger.info(
+            f"[Cache] Downloaded full video: {output_path} ({file_size_mb:.1f} MB)"
+        )
         return output_path
 
     # Fallback: find any video file in the directory
     for f in os.listdir(output_dir):
-        if f.endswith(".mp4"):
+        if f.endswith((".mp4", ".mkv", ".webm")):
             full_path = os.path.join(output_dir, f)
-            logger.info(f"[Cache] Found video file: {full_path}")
+            file_size_mb = os.path.getsize(full_path) / (1024 * 1024)
+            logger.info(f"[Cache] Found video file: {full_path} ({file_size_mb:.1f} MB)")
             return full_path
 
     raise FileNotFoundError(f"Video file not found after download in {output_dir}")
+
+
+# ── Internal utilities ─────────────────────────────────────────────────────
+
+def _quality_to_format(quality: str) -> str:
+    """Convert a quality string to a yt-dlp format selector."""
+    QUALITY_MAP = {
+        "best": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "2160p": "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best",
+        "1440p": "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best",
+        "1080p": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best",
+        "720p": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best",
+        "480p": "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best",
+    }
+    return QUALITY_MAP.get(quality, QUALITY_MAP["1080p"])
+
+
+def _find_downloaded_file(directory: str, name_prefix: str) -> str | None:
+    """Find a downloaded file by prefix (yt-dlp may change extensions)."""
+    for f in os.listdir(directory):
+        if f.startswith(name_prefix) and f.endswith((".mp4", ".mkv", ".webm")):
+            return os.path.join(directory, f)
+    # Broader fallback
+    for f in os.listdir(directory):
+        if f.endswith((".mp4", ".mkv", ".webm")):
+            return os.path.join(directory, f)
+    return None
