@@ -28,11 +28,8 @@ services:
       API_URL: "http://cobalt:9000"
       # YouTube cookies for authentication (required on datacenter IPs)
       COOKIE_PATH: "/cookies.json"
-    command: sh -c "node /docker_convert_cookies.js && node src/cobalt"
     volumes:
-      - ./cookies.txt:/cookies.txt:ro
-      - ./cookies.json:/cookies.json:rw
-      - ./docker_convert_cookies.js:/docker_convert_cookies.js:ro
+      - ./cookies.json:/cookies.json:ro
     expose:
       - "9000"
     healthcheck:
