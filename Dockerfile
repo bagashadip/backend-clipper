@@ -13,6 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         software-properties-common \
         curl \
+        gnupg \
     && add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update && apt-get install -y --no-install-recommends \
         python3.11 \
