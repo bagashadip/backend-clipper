@@ -4,6 +4,7 @@ import logging
 import tempfile
 import re
 import yt_dlp
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -163,11 +164,18 @@ def extract_metadata(youtube_url: str) -> dict:
 
     logger.info(f"[yt-dlp] Extracting metadata for {youtube_id}")
 
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=False)
-    except Exception as e:
-        raise ValueError(f"Failed to extract metadata: {e}")
+    max_retries = 3
+    info = None
+    for attempt in range(max_retries):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(youtube_url, download=False)
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise ValueError(f"Failed to extract metadata after {max_retries} attempts: {e}")
+            logger.warning(f"Metadata extraction attempt {attempt + 1} failed: {e}. Retrying in 3s...")
+            time.sleep(3)
 
     if not info:
         raise ValueError(f"No metadata returned for {youtube_url}")
@@ -220,11 +228,17 @@ def download_audio(youtube_url: str, youtube_id: str) -> str:
 
     logger.info(f"[yt-dlp] Downloading audio for {youtube_id}")
 
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([youtube_url])
-    except Exception as e:
-        raise ValueError(f"Failed to download audio: {e}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([youtube_url])
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise ValueError(f"Failed to download audio after {max_retries} attempts: {e}")
+            logger.warning(f"Download attempt {attempt + 1} failed: {e}. Retrying in 5s...")
+            time.sleep(5)
 
     # Find the downloaded audio file
     for f in os.listdir(output_dir):
@@ -288,11 +302,17 @@ def download_video_segment(
         f"{start_time:.1f}-{end_time:.1f}s"
     )
 
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([youtube_url])
-    except Exception as e:
-        raise ValueError(f"Failed to download video segment: {e}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([youtube_url])
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise ValueError(f"Failed to download video segment after {max_retries} attempts: {e}")
+            logger.warning(f"Segment download attempt {attempt + 1} failed: {e}. Retrying in 5s...")
+            time.sleep(5)
 
     # yt-dlp may append an extension — find the actual file
     actual_full = _find_downloaded_file(output_dir, "full")
@@ -360,11 +380,17 @@ def download_full_video(
 
     logger.info(f"[yt-dlp] Downloading full video: {youtube_id} at quality={quality}")
 
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([youtube_url])
-    except Exception as e:
-        raise ValueError(f"Failed to download full video: {e}")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([youtube_url])
+            break
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise ValueError(f"Failed to download full video after {max_retries} attempts: {e}")
+            logger.warning(f"Full download attempt {attempt + 1} failed: {e}. Retrying in 5s...")
+            time.sleep(5)
 
     # yt-dlp may change the extension — find the actual file
     if os.path.exists(output_path):

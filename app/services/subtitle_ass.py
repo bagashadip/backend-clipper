@@ -16,26 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 def _probe_nvenc() -> bool:
-    """Return True only if h264_nvenc can actually encode a test frame."""
-    try:
-        result = subprocess.run(
-            [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "color=black:s=64x64:d=1",
-                "-vframes", "1", "-c:v", "h264_nvenc", "-f", "null", "-",
-            ],
-            capture_output=True, text=True, timeout=15,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+    """Return False, forcing CPU mode."""
+    return False
 
-
-_GPU_AVAILABLE: bool = _probe_nvenc()
-if _GPU_AVAILABLE:
-    logger.info("subtitle_ass: GPU encoding available — using h264_nvenc")
-else:
-    logger.warning("subtitle_ass: h264_nvenc not found — falling back to libx264")
+_GPU_AVAILABLE: bool = False
+logger.info("subtitle_ass: using CPU encoding (libx264)")
 
 # ── ASS color helpers ─────────────────────────────────────────────────────
 # ASS uses BGR hex in the format &HBBGGRR& (alpha prefix &HAABBGGRR& optional)
@@ -512,8 +497,7 @@ def burn_ass_subtitles(
     """
     Burn an .ASS subtitle file into a video using FFmpeg's ``ass`` filter.
 
-    Uses ``h264_nvenc`` (GPU) when available, with automatic fallback to
-    ``libx264`` (CPU).  In GPU mode, CQ-based VBR is used; in CPU mode, CRF.
+    Uses ``libx264`` (CPU). In CPU mode, CRF is used.
 
     Args:
         input_video_path: Source video (already cropped/resized).

@@ -1,7 +1,5 @@
-# ── Base: NVIDIA CUDA 12.2 runtime on Ubuntu 22.04 ────────────────────────────
-# Provides the CUDA runtime libraries required by h264_nvenc.
-# The NVIDIA driver itself must be installed on the host (GCE/GKE node).
-FROM nvidia/cuda:12.2.2-runtime-ubuntu22.04 AS base
+# ── Base: Ubuntu 22.04 ────────────────────────────
+FROM ubuntu:22.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -55,14 +53,7 @@ WORKDIR /app
 COPY --from=deps /usr/local/lib/python3.11 /usr/local/lib/python3.11
 COPY --from=deps /usr/local/bin /usr/local/bin
 
-# Pre-download faster-whisper large-v3-turbo model as root, then fix ownership
-# so the clipper user can read it at runtime (no network needed inside the container).
-# HF_HOME controls where HuggingFace caches the CTranslate2 model files.
-ENV HF_HOME=/app/.cache/huggingface \
-    XDG_CACHE_HOME=/app/.cache \
-    TRITON_CACHE_DIR=/app/.cache/triton
-RUN python3.11 -c "from faster_whisper import WhisperModel; WhisperModel('large-v3-turbo', device='cpu', compute_type='int8')" \
-    && chown -R clipper:clipper /app/.cache
+
 
 # Copy application code
 COPY --chown=clipper:clipper . .

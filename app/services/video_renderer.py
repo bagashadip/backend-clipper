@@ -11,29 +11,21 @@ if not hasattr(Image, "ANTIALIAS"):
 
 from moviepy.editor import VideoFileClip, VideoClip, CompositeVideoClip
 from app.services.youtube import download_video_segment
-from app.services.subtitle_ass import generate_dynamic_ass, burn_ass_subtitles, _GPU_AVAILABLE
+from app.services.subtitle_ass import generate_dynamic_ass, burn_ass_subtitles
 
 logger = logging.getLogger(__name__)
 
-if _GPU_AVAILABLE:
-    logger.info("video_renderer: GPU encoding active — h264_nvenc")
-    _VCODEC = "h264_nvenc"
-    _PRESET_FAST = "p1"
-    _PRESET_BALANCED = "p4"
-else:
-    logger.warning("video_renderer: h264_nvenc unavailable — falling back to libx264")
-    _VCODEC = "libx264"
-    _PRESET_FAST = "ultrafast"
-    _PRESET_BALANCED = "medium"
+logger.info("video_renderer: Using CPU encoding (libx264)")
+_VCODEC = "libx264"
+_PRESET_FAST = "ultrafast"
+_PRESET_BALANCED = "medium"
 
 
 def _cq_params(cq: int, preset: str) -> list[str]:
     """Return ffmpeg quality params for the active encoder.
 
-    NVENC uses ``-rc vbr -cq CQ``; x264 uses ``-crf CQ``.
+    x264 uses ``-crf CQ``.
     """
-    if _GPU_AVAILABLE:
-        return ["-rc", "vbr", "-cq", str(cq)]
     return ["-crf", str(cq)]
 
 # Find a bold font that exists on the system
@@ -201,9 +193,8 @@ def generate_preview_from_clip(rendered_path: str) -> str:
     output_dir = tempfile.mkdtemp(prefix="clipper_preview_")
     output_path = os.path.join(output_dir, "preview.mp4")
 
-    gpu_input = ["-hwaccel", "cuda"] if _GPU_AVAILABLE else []
     cmd = [
-        "ffmpeg", *gpu_input, "-i", rendered_path,
+        "ffmpeg", "-i", rendered_path,
         "-vf", "scale='min(480,iw)':-2",
         "-c:v", _VCODEC, "-preset", _PRESET_FAST,
         *_cq_params(32, _PRESET_FAST),

@@ -72,6 +72,7 @@ services:
       HF_HOME: /app/.cache/huggingface
       DOWNLOAD_PROXY_URL: ${DOWNLOAD_PROXY_URL}
       BGUTIL_PROVIDER_URL: http://bgutil-provider:4416
+      GROQ_API_KEY: ${GROQ_API_KEY}
     ports:
       - "8000:8000"
     volumes:
@@ -88,7 +89,7 @@ services:
       start_period: 60s
       retries: 3
 
-  # ── Celery worker  (GPU required for h264_nvenc) ──────────────────────────
+  # ── Celery worker  (CPU — no GPU needed) ──────────────────────────
   worker:
     build:
       context: .
@@ -106,10 +107,9 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
-      HF_HOME: /app/.cache/huggingface
-      TRITON_CACHE_DIR: /tmp/.triton
       DOWNLOAD_PROXY_URL: ${DOWNLOAD_PROXY_URL}
       BGUTIL_PROVIDER_URL: http://bgutil-provider:4416
+      GROQ_API_KEY: ${GROQ_API_KEY}
     volumes:
       - whisper_cache:/app/.cache/huggingface
     depends_on:
@@ -117,14 +117,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Expose the NVIDIA GPU to the container for h264_nvenc
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu, video]
 
 volumes:
   postgres_data:
