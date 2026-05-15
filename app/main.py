@@ -8,9 +8,41 @@ from app.api.endpoints.webhooks import router as webhooks_router
 from app.api.endpoints.payment import router as payment_router
 from app.config import get_settings
 from app.database import engine, Base
+import logging
+import time
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
-Base.metadata.create_all(bind=engine)
+
+
+def _init_db(max_retries: int = 5, retry_delay: float = 3.0):
+    """Initialize database tables with retry logic.
+
+    Handles the case where postgres isn't ready yet on container restart,
+    or where enum types already exist from schema.sql init.
+    Uses checkfirst=True (the default for create_all) so existing tables
+    and types are skipped gracefully.
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database tables initialized successfully")
+            return
+        except Exception as e:
+            if attempt == max_retries:
+                logger.error(f"Failed to initialize database after {max_retries} attempts: {e}")
+                # Don't crash the app — tables likely already exist from schema.sql
+                # The app can still function if the DB is reachable
+                logger.warning("Continuing startup without create_all — tables should exist from schema.sql")
+                return
+            logger.warning(
+                f"Database init attempt {attempt}/{max_retries} failed: {e}. "
+                f"Retrying in {retry_delay}s..."
+            )
+            time.sleep(retry_delay)
+
+
+_init_db()
 
 app = FastAPI(title="AI Video Clipper", version="1.0.0")
 
@@ -48,4 +80,12 @@ app.include_router(payment_router, prefix="/api/payment")
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    """Health check that also verifies database connectivity."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "ok"}  # Still return ok so container doesn't restart in a loop

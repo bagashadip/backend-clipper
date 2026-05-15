@@ -70,7 +70,7 @@ USER clipper
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=10s --start-period=30s --retries=5 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Default: run the API server.

@@ -80,14 +80,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        restart: true
       redis:
         condition: service_healthy
+        restart: true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
+      interval: 15s
       timeout: 10s
-      start_period: 60s
-      retries: 3
+      start_period: 30s
+      retries: 5
 
   # ── Celery worker  (CPU — no GPU needed) ──────────────────────────
   worker:
@@ -115,8 +117,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        restart: true
       redis:
         condition: service_healthy
+        restart: true
 
 volumes:
   postgres_data:

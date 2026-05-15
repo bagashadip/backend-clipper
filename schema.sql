@@ -2,13 +2,33 @@
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-CREATE TYPE subscription_tier AS ENUM ('free', 'pro', 'enterprise');
-CREATE TYPE video_status AS ENUM ('pending', 'downloading', 'transcribing', 'analyzing', 'rendering', 'completed', 'failed');
-CREATE TYPE clip_status AS ENUM ('pending', 'rendering', 'completed', 'failed');
-CREATE TYPE caption_style AS ENUM ('classic', 'hormozi', 'hormozi_dynamic', 'impact_pop', 'typewriter', 'none', 'kenergy', 'midnight', 'cleanboss', 'staccato', 'serenity');
-CREATE TYPE clip_quality AS ENUM ('480p', '720p', '1080p');
+-- Use DO blocks to create enum types only if they don't exist
+DO $$ BEGIN
+    CREATE TYPE subscription_tier AS ENUM ('free', 'pro', 'enterprise');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE TABLE users (
+DO $$ BEGIN
+    CREATE TYPE video_status AS ENUM ('pending', 'downloading', 'transcribing', 'analyzing', 'rendering', 'completed', 'failed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE clip_status AS ENUM ('pending', 'rendering', 'completed', 'failed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE caption_style AS ENUM ('classic', 'hormozi', 'hormozi_dynamic', 'impact_pop', 'typewriter', 'none', 'kenergy', 'midnight', 'cleanboss', 'staccato', 'serenity');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE clip_quality AS ENUM ('480p', '720p', '1080p');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) UNIQUE NOT NULL,
     subscription_tier subscription_tier NOT NULL DEFAULT 'free',
@@ -17,7 +37,7 @@ CREATE TABLE users (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE source_videos (
+CREATE TABLE IF NOT EXISTS source_videos (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     youtube_url TEXT NOT NULL,
@@ -32,7 +52,7 @@ CREATE TABLE source_videos (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE clips (
+CREATE TABLE IF NOT EXISTS clips (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     video_id UUID NOT NULL REFERENCES source_videos(id) ON DELETE CASCADE,
     storage_url TEXT,
@@ -52,7 +72,7 @@ CREATE TABLE clips (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE subtitles (
+CREATE TABLE IF NOT EXISTS subtitles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     clip_id UUID NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
     word VARCHAR(200) NOT NULL,
@@ -61,9 +81,22 @@ CREATE TABLE subtitles (
     sequence_index INTEGER NOT NULL
 );
 
-CREATE INDEX idx_source_videos_user_id ON source_videos(user_id);
-CREATE INDEX idx_source_videos_status ON source_videos(status);
-CREATE INDEX idx_source_videos_youtube_id ON source_videos(youtube_id);
-CREATE INDEX idx_clips_video_id ON clips(video_id);
-CREATE INDEX idx_subtitles_clip_id ON subtitles(clip_id);
-CREATE INDEX idx_subtitles_sequence ON subtitles(clip_id, sequence_index);
+CREATE TABLE IF NOT EXISTS transactions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    order_id VARCHAR(255) UNIQUE NOT NULL,
+    gross_amount FLOAT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    payment_type VARCHAR(50),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_videos_user_id ON source_videos(user_id);
+CREATE INDEX IF NOT EXISTS idx_source_videos_status ON source_videos(status);
+CREATE INDEX IF NOT EXISTS idx_source_videos_youtube_id ON source_videos(youtube_id);
+CREATE INDEX IF NOT EXISTS idx_clips_video_id ON clips(video_id);
+CREATE INDEX IF NOT EXISTS idx_subtitles_clip_id ON subtitles(clip_id);
+CREATE INDEX IF NOT EXISTS idx_subtitles_sequence ON subtitles(clip_id, sequence_index);
+CREATE INDEX IF NOT EXISTS idx_transactions_order_id ON transactions(order_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id);
