@@ -53,8 +53,9 @@ WORKDIR /app
 # Copy installed Python packages from deps stage
 COPY --from=deps /usr/local/lib/python3.11 /usr/local/lib/python3.11
 COPY --from=deps /usr/local/bin /usr/local/bin
+COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
 
-
+RUN chmod +x /usr/local/bin/deno
 
 # Copy application code
 COPY --chown=clipper:clipper . .
