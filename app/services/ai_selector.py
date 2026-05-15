@@ -3,8 +3,7 @@ import logging
 import re
 import time
 from pydantic import BaseModel, Field, field_validator
-from google import genai
-from google.genai import types
+from anthropic import Anthropic
 from openai import OpenAI
 from app.config import get_settings
 
@@ -222,21 +221,7 @@ def _build_prompt(user_tier: str, video_duration: float, transcript_text: str) -
         .replace("{transcript_text}", transcript_text)
     )
 
-# Memaksa AI memberikan Integer murni di layer Schema
-CLIP_SCHEMA = types.Schema(
-    type=types.Type.ARRAY,
-    items=types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            "title":          types.Schema(type=types.Type.STRING,  description="Judul pendek yang catchy"),
-            "start_time":     types.Schema(type=types.Type.INTEGER, description="TOTAL DETIK (Integer bulat). WAJIB total detik! Contoh: 1 mnt 30 dtk = 90"),
-            "end_time":       types.Schema(type=types.Type.INTEGER, description="TOTAL DETIK (Integer bulat). WAJIB total detik! Contoh: 2 mnt 15 dtk = 135"),
-            "virality_score": types.Schema(type=types.Type.INTEGER, description="Skor viralitas 1-100"),
-            "reasoning":      types.Schema(type=types.Type.STRING,  description="Alasan kenapa klip ini viral"),
-        },
-        required=["title", "start_time", "end_time", "virality_score", "reasoning"],
-    ),
-)
+
 
 # ---------------------------------------------------------------------------
 # Smart Padding Algorithm
@@ -351,79 +336,48 @@ def format_whisper_to_text(whisper_words: list[dict]) -> str:
 # AI Provider Functions (Dynamic Switch via settings.ai_provider)
 # ---------------------------------------------------------------------------
 
-def _call_gemini(prompt: str, user_tier: str = "free") -> list[dict] | None:
-    """Call Gemini with structured schema enforcement and retry logic.
+def _call_claude(prompt: str, user_tier: str = "free") -> list[dict] | None:
+    """Call Anthropic Claude API with structured JSON output and retry logic."""
+    client = Anthropic(api_key=settings.claude_api_key)
 
-    Returns parsed clip dicts on success, None on failure.
-    """
-    client = genai.Client(
-        api_key=settings.gemini_api_key,
-        http_options=types.HttpOptions(timeout=180_000),
-    )
-
-    config = types.GenerateContentConfig(
-        temperature=0.7,
-        max_output_tokens=8192,
-        response_mime_type="application/json",
-        response_schema=CLIP_SCHEMA,
-    )
-
-    if settings.gemini_model:
-        models_to_try = [settings.gemini_model]
-        logger.info(f"Gemini model override: {settings.gemini_model}")
-    elif user_tier == "free":
-        models_to_try = ["gemini-2.5-flash"]
+    if settings.claude_model:
+        model_name = settings.claude_model
     else:
-        models_to_try = ["gemini-2.5-pro"]
+        model_name = "claude-3-5-sonnet-latest"
+        
+    for attempt in range(3):
+        try:
+            logger.info(f"Trying Claude {model_name} (attempt {attempt+1}/3)")
+            response = client.messages.create(
+                model=model_name,
+                max_tokens=8192,
+                temperature=0.7,
+                system="You are an expert content strategist. Return your output exclusively as a valid JSON array matching the requested schema. Do not include any other text.",
+                messages=[{"role": "user", "content": prompt}]
+            )
 
-    for model_name in models_to_try:
-        for attempt in range(3):
-            try:
-                logger.info(f"Trying Gemini {model_name} (attempt {attempt+1}/3)")
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=config,
+            raw_text = response.content[0].text
+            raw_clips = _clean_and_parse_json(raw_text)
+
+            if raw_clips:
+                logger.info(f"Claude {model_name} returned {len(raw_clips)} raw clips")
+                return raw_clips
+                
+            logger.warning(f"Claude JSON parse failed, raw: {raw_text[:300]}")
+
+        except Exception as e:
+            err_str = str(e).lower()
+            if ("429" in err_str or "503" in err_str or "overloaded" in err_str
+                    or "rate limit" in err_str or "timed out" in err_str) and attempt < 2:
+                wait = 2 ** attempt * 5
+                logger.warning(
+                    f"Claude {model_name} transient error (attempt {attempt+1}/3), "
+                    f"retrying in {wait}s: {e}"
                 )
-
-                raw_clips: list[dict] | None = None
-                if response.parsed is not None:
-                    candidate = response.parsed
-                    raw_clips = candidate if isinstance(candidate, list) else None
-
-                if not raw_clips:
-                    raw_clips = _clean_and_parse_json(getattr(response, "text", None))
-
-                if raw_clips:
-                    logger.info(f"Gemini {model_name} returned {len(raw_clips)} raw clips")
-                    return raw_clips
-
-            except json.JSONDecodeError as e:
-                if attempt < 2:
-                    wait = 2 ** attempt * 5
-                    logger.warning(
-                        f"Gemini {model_name} JSON parse error (attempt {attempt+1}/3), "
-                        f"retrying in {wait}s: {e}"
-                    )
-                    time.sleep(wait)
-                else:
-                    logger.warning(f"Gemini {model_name} failed (JSON): {e}")
-                    break
-            except Exception as e:
-                err_str = str(e)
-                if ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str
-                        or "RESOURCE_EXHAUSTED" in err_str or "timed out" in err_str) and attempt < 2:
-                    wait = 2 ** attempt * 5
-                    logger.warning(
-                        f"Gemini {model_name} transient error (attempt {attempt+1}/3), "
-                        f"retrying in {wait}s: {e}"
-                    )
-                    time.sleep(wait)
-                else:
-                    logger.warning(f"Gemini {model_name} failed: {e}")
-                    break
-        # If we got results from this model, stop trying other models
-        # (handled by return in the loop above)
+                time.sleep(wait)
+            else:
+                logger.warning(f"Claude {model_name} failed: {e}")
+                break
 
     return None
 
@@ -495,8 +449,8 @@ def _call_ai(prompt: str, user_tier: str = "free") -> list[dict] | None:
 
     if provider == "deepseek":
         return _call_deepseek(prompt, user_tier)
-    elif provider == "gemini":
-        return _call_gemini(prompt, user_tier)
+    elif provider == "claude":
+        return _call_claude(prompt, user_tier)
     else:
         logger.error(f"Unknown AI_PROVIDER '{provider}' — falling back to DeepSeek")
         return _call_deepseek(prompt, user_tier)
@@ -529,9 +483,9 @@ def extract_and_filter_clips(
     user_tier: str = "free",
 ) -> list[ViralClip]:
     """
-    Full pipeline: prompt AI (Gemini or DeepSeek) → parse → validate → smart-pad → filter → cap.
+    Full pipeline: prompt AI (Claude or DeepSeek) → parse → validate → smart-pad → filter → cap.
 
-    Provider is controlled by the ``AI_PROVIDER`` env var (``"gemini"`` or ``"deepseek"``).
+    Provider is controlled by the ``AI_PROVIDER`` env var (``"claude"`` or ``"deepseek"``).
 
     Returns:
         List of ViralClip objects (score >= 80, padded to min_dur, max 15 items).
@@ -543,7 +497,7 @@ def extract_and_filter_clips(
     # --- Build prompt ---
     prompt = _build_prompt(user_tier, video_duration, transcript_text)
 
-    # --- Call AI (Gemini or DeepSeek based on AI_PROVIDER env var) ---
+    # --- Call AI (Claude or DeepSeek based on AI_PROVIDER env var) ---
     logger.info(
         f"Sending transcript to AI provider '{settings.ai_provider}' "
         f"(tier={user_tier}, duration={min_dur}-{max_dur}s)"

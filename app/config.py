@@ -5,14 +5,14 @@ from functools import lru_cache
 class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5432/clipper"
     redis_url: str = "redis://localhost:6379/0"
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-pro"  # "" = auto (flash for free, pro for paid); else e.g. "gemini-2.5-pro"
+    claude_api_key: str = ""
+    claude_model: str = "claude-3-5-sonnet-latest"
     # DeepSeek (OpenAI-compatible)
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"  # e.g. "deepseek-chat", "deepseek-v4-pro"
-    # AI provider switch: "gemini" or "deepseek"
-    ai_provider: str = "deepseek"
+    # AI provider switch: "claude" or "deepseek"
+    ai_provider: str = "claude"
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
     aws_s3_bucket: str = "clipper-output"
