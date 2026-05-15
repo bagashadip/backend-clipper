@@ -348,13 +348,17 @@ def _call_claude(prompt: str, user_tier: str = "free") -> list[dict] | None:
     for attempt in range(3):
         try:
             logger.info(f"Trying Claude {model_name} (attempt {attempt+1}/3)")
-            response = client.messages.create(
-                model=model_name,
-                max_tokens=8192,
-                temperature=0.7,
-                system="You are an expert content strategist. Return your output exclusively as a valid JSON array matching the requested schema. Do not include any other text.",
-                messages=[{"role": "user", "content": prompt}]
-            )
+            # Build request kwargs — some models (e.g. opus) don't support temperature
+            create_kwargs = {
+                "model": model_name,
+                "max_tokens": 8192,
+                "system": "You are an expert content strategist. Return your output exclusively as a valid JSON array matching the requested schema. Do not include any other text.",
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            # Only add temperature for models that support it (not opus/thinking models)
+            if "opus" not in model_name.lower():
+                create_kwargs["temperature"] = 0.7
+            response = client.messages.create(**create_kwargs)
 
             raw_text = response.content[0].text
             raw_clips = _clean_and_parse_json(raw_text)

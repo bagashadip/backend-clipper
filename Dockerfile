@@ -62,6 +62,10 @@ RUN chmod +x /usr/local/bin/deno
 # Copy application code
 COPY --chown=clipper:clipper . .
 
+# Create cache directories and set permissions
+RUN mkdir -p /app/.cache/yt-dlp /app/.cache/huggingface \
+    && chown -R clipper:clipper /app/.cache
+
 USER clipper
 
 EXPOSE 8000

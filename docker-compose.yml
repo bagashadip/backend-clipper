@@ -70,13 +70,13 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
       HF_HOME: /app/.cache/huggingface
-      DOWNLOAD_PROXY_URL: ${DOWNLOAD_PROXY_URL}
       BGUTIL_PROVIDER_URL: http://bgutil-provider:4416
       GROQ_API_KEY: ${GROQ_API_KEY}
     ports:
       - "8000:8000"
     volumes:
       - whisper_cache:/app/.cache/huggingface
+      - ytdlp_cache:/app/.cache/yt-dlp
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,11 +107,11 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
-      DOWNLOAD_PROXY_URL: ${DOWNLOAD_PROXY_URL}
       BGUTIL_PROVIDER_URL: http://bgutil-provider:4416
       GROQ_API_KEY: ${GROQ_API_KEY}
     volumes:
       - whisper_cache:/app/.cache/huggingface
+      - ytdlp_cache:/app/.cache/yt-dlp
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,3 +122,4 @@ volumes:
   postgres_data:
   redis_data:
   whisper_cache:
+  ytdlp_cache:
