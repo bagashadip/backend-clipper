@@ -71,6 +71,19 @@ STYLE_PRESETS = {
         "alignment": 2,
         "margin_v": 60,
     },
+    "hormozi": {
+        "fontname": "DejaVu Sans",
+        "fontsize": 18,
+        "primary_color": _COLOR_YELLOW,
+        "highlight_color": _COLOR_YELLOW,   # No per-word highlight (static)
+        "outline_color": _COLOR_BLACK,
+        "back_color": "&H00000000&",
+        "bold": -1,
+        "outline": 3,
+        "shadow": 1,
+        "alignment": 2,
+        "margin_v": 60,
+    },
     "impact_pop": {
         "fontname": "DejaVu Sans",
         "fontsize": 20,
