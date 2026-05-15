@@ -131,6 +131,8 @@ def _build_ydl_opts(
         # Let yt-dlp handle retries
         "retries": 3,
         "fragment_retries": 3,
+        # Allow yt-dlp to download remote JS solvers for YouTube
+        "remote_components": ["ejs:github"],
         # Force IPv6
         "force_ipv6": True,
         # Extractor args: use web client + bgutil PO token provider
