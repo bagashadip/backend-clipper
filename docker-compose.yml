@@ -65,7 +65,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/clipper
+      DATABASE_URL: postgresql://postgres:T33d3vsu1yiDksGjozTj@postgres:5432/clipper
       REDIS_URL: redis://redis:6379/0
       HF_HOME: /app/.cache/huggingface
       BGUTIL_PROVIDER_URL: http://bgutil-provider:4416
