@@ -9,8 +9,6 @@ import time
 logger = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────
-# Residential proxy URL for bypassing YouTube IP blocks on GCP
-DOWNLOAD_PROXY_URL = os.environ.get("DOWNLOAD_PROXY_URL", "")
 
 # bgutil PO Token provider (runs as a sidecar container)
 BGUTIL_PROVIDER_URL = os.environ.get(
@@ -93,6 +91,34 @@ def _build_ydl_opts(
         format_spec: yt-dlp format selector string
         extra_opts: additional ydl_opts to merge in
     """
+    # Define a progress hook to log periodically (e.g. roughly every 10%)
+    last_printed_percent = [-10]  # Use list to allow modification in nested function
+    
+    def progress_hook(d):
+        if d['status'] == 'downloading':
+            try:
+                percent_str = d.get('_percent_str', '').strip()
+                if not percent_str:
+                    return
+                    
+                # Clean ANSI escape codes from percent_str if any
+                import re
+                ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                clean_percent = ansi_escape.sub('', percent_str).replace('%', '')
+                
+                percent_val = float(clean_percent)
+                
+                # Log every 10% progress
+                if percent_val - last_printed_percent[0] >= 10:
+                    speed = d.get('_speed_str', 'N/A').strip()
+                    eta = d.get('_eta_str', 'N/A').strip()
+                    logger.info(f"[yt-dlp] Downloading... {percent_val:.1f}% at {speed} (ETA: {eta})")
+                    last_printed_percent[0] = percent_val
+            except Exception:
+                pass
+        elif d['status'] == 'finished':
+            logger.info("[yt-dlp] Download finished, now finalizing...")
+
     opts = {
         "format": format_spec,
         "outtmpl": output_template,
@@ -105,6 +131,8 @@ def _build_ydl_opts(
         # Let yt-dlp handle retries
         "retries": 3,
         "fragment_retries": 3,
+        # Force IPv6
+        "force_ipv6": True,
         # Extractor args: use web client + bgutil PO token provider
         "extractor_args": {
             "youtube": {
@@ -113,12 +141,10 @@ def _build_ydl_opts(
                 "youtubepot-bgutilhttp:base_url": [BGUTIL_PROVIDER_URL],
             },
         },
+        "progress_hooks": [progress_hook],
     }
 
-    # Layer 1: Residential proxy
-    if DOWNLOAD_PROXY_URL:
-        opts["proxy"] = DOWNLOAD_PROXY_URL
-        logger.info(f"[yt-dlp] Using proxy: {DOWNLOAD_PROXY_URL[:30]}...")
+
 
     # Layer 3: Cookies
     cookies_path = _find_cookies_file()
