@@ -277,7 +277,30 @@ def process_video_task(self, video_id: str):
         video.status = "transcribing"
         db.commit()
 
-        transcript = transcribe_audio(audio_path)
+        transcript = None
+        try:
+            transcript = transcribe_audio(audio_path)
+        except ValueError as e:
+            # Transcription returned 0 words — audio might be corrupted from S3 extraction.
+            # Retry by downloading fresh audio directly from YouTube.
+            if "0 word-level timestamps" in str(e) and video.storage_url:
+                logger.warning(
+                    f"Transcription failed with S3-extracted audio: {e}. "
+                    f"Retrying with fresh YouTube audio download..."
+                )
+                # Clean up the bad audio file
+                if audio_path and os.path.exists(audio_path):
+                    try:
+                        os.remove(audio_path)
+                    except OSError:
+                        pass
+                    audio_path = None
+
+                # Download fresh audio from YouTube
+                audio_path = download_audio(video.youtube_url, youtube_id)
+                transcript = transcribe_audio(audio_path)
+            else:
+                raise
 
         # Step 3: AI clip selection
         video.status = "analyzing"
