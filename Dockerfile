@@ -39,8 +39,10 @@ FROM base AS deps
 
 WORKDIR /build
 COPY requirements.txt .
-RUN python3.11 -m pip install --no-cache-dir -r requirements.txt \
-    && python3.11 -m pip install --no-cache-dir -U yt-dlp
+RUN python3.11 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -U yt-dlp
 
 # ── Final image ────────────────────────────────────────────────────────────────
 FROM base AS final
@@ -50,9 +52,9 @@ RUN groupadd -r clipper && useradd -r -g clipper -d /app -s /sbin/nologin clippe
 
 WORKDIR /app
 
-# Copy installed Python packages from deps stage
-COPY --from=deps /usr/local/lib/python3.11 /usr/local/lib/python3.11
-COPY --from=deps /usr/local/bin /usr/local/bin
+# Copy virtual environment from deps stage
+COPY --from=deps /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
 
 RUN chmod +x /usr/local/bin/deno
