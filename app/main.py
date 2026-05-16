@@ -68,10 +68,17 @@ if settings.frontend_url and settings.frontend_url not in _allowed_origins:
 if settings.backend_public_url and settings.backend_public_url not in _allowed_origins:
     _allowed_origins.append(settings.backend_public_url)
 
+# Optional regex allow-list — handy for ephemeral Cloudflare quick tunnels
+# (their hostname changes on every restart, so a static URL in .env goes
+# stale fast). Set CORS_ORIGIN_REGEX to e.g. ``https?://.*\.trycloudflare\.com``
+# in development; leave empty in production.
+_cors_origin_regex = (settings.cors_origin_regex or "").strip() or None
+
 # 2. CORS (Ditulis Pertama, Dieksekusi Terakhir)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins, # Sekarang variabelnya udah ada
+    allow_origins=_allowed_origins,
+    allow_origin_regex=_cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

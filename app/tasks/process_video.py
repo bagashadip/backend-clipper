@@ -17,62 +17,64 @@ def _probe_s3_video_metadata(s3_key: str, youtube_id: str) -> dict:
     ``ffprobe``. Used when YouTube is blocking us but we already have the
     full video cached in S3.
 
+    Streams metadata from a presigned S3 URL — ffprobe only fetches the
+    ``moov`` atom (a few KB) instead of downloading the whole file. This
+    keeps the wizard endpoint snappy (~1 s) and avoids burning bandwidth.
+
     Returns a dict with ``duration`` (seconds, int) and ``max_source_height``
     (px, int). Returns empty values on failure.
     """
     import subprocess
     import json
-    import tempfile
-
-    settings_local = None  # populated lazily below
-    output_dir = tempfile.mkdtemp(prefix="clipper_probe_")
-    video_path = os.path.join(output_dir, f"{youtube_id}.mp4")
+    from app.services.storage import generate_presigned_url
 
     try:
-        from app.config import get_settings
-        settings_local = get_settings()
-        client = _get_s3_client()
-        client.download_file(settings_local.aws_s3_bucket, s3_key, video_path)
+        # 5 minute presigned URL is plenty for ffprobe to read the moov atom.
+        signed_url = generate_presigned_url(s3_key, expiration=300)
+    except Exception as e:
+        logger.warning(f"[probe] presign failed for {s3_key}: {e}")
+        return {}
 
-        # ffprobe → JSON
+    try:
+        # ffprobe over HTTP — uses range requests, only pulls the few KB
+        # needed to parse format + streams.
         result = subprocess.run(
             [
                 "ffprobe", "-v", "error",
                 "-print_format", "json",
                 "-show_format", "-show_streams",
-                video_path,
+                signed_url,
             ],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=20,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"ffprobe failed: {result.stderr[-300:]}")
-
-        data = json.loads(result.stdout)
-        video_stream = next(
-            (s for s in data.get("streams", []) if s.get("codec_type") == "video"),
-            None,
-        )
-        if not video_stream:
+            logger.warning(f"[probe] ffprobe failed for {s3_key}: {result.stderr[-300:]}")
             return {}
 
-        duration = float(data.get("format", {}).get("duration", 0)) or float(
-            video_stream.get("duration", 0)
-        )
-        height = int(video_stream.get("height", 0) or 0)
+        data = json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        logger.warning(f"[probe] ffprobe timed out for {s3_key}")
+        return {}
+    except json.JSONDecodeError as e:
+        logger.warning(f"[probe] ffprobe returned bad JSON for {s3_key}: {e}")
+        return {}
 
-        return {
-            "duration": int(duration) if duration > 0 else 0,
-            "max_source_height": height if height > 0 else None,
-        }
+    video_stream = next(
+        (s for s in data.get("streams", []) if s.get("codec_type") == "video"),
+        None,
+    )
+    if not video_stream:
+        return {}
 
-    finally:
-        try:
-            if os.path.exists(video_path):
-                os.remove(video_path)
-            if os.path.exists(output_dir):
-                os.rmdir(output_dir)
-        except OSError:
-            pass
+    duration = float(data.get("format", {}).get("duration", 0)) or float(
+        video_stream.get("duration", 0)
+    )
+    height = int(video_stream.get("height", 0) or 0)
+
+    return {
+        "duration": int(duration) if duration > 0 else 0,
+        "max_source_height": height if height > 0 else None,
+    }
 
 
 def extract_audio_from_s3_video(s3_key: str, youtube_id: str) -> str:
@@ -277,13 +279,17 @@ def process_video_task(self, video_id: str):
 
         # ── Metadata resolution (cache-first, no YouTube hit when avoidable) ──
         # Try DB cache first: any prior row with this youtube_id that has
-        # title/duration/max_source_height already populated.
+        # title/duration/max_source_height already populated. Skip rows whose
+        # title is the legacy "Video <id>" placeholder so the real title
+        # eventually replaces them.
+        placeholder_title = f"Video {youtube_id}"
         cached_meta_row = (
             db.query(SourceVideo)
             .filter(
                 SourceVideo.youtube_id == youtube_id,
                 SourceVideo.duration_seconds.isnot(None),
                 SourceVideo.title.isnot(None),
+                SourceVideo.title != placeholder_title,
             )
             .order_by(SourceVideo.created_at.desc())
             .first()
@@ -294,7 +300,7 @@ def process_video_task(self, video_id: str):
                 f"[Metadata cache HIT] Reusing metadata from row "
                 f"{cached_meta_row.id} for {youtube_id} (no YouTube hit)"
             )
-            if not video.title:
+            if not video.title or video.title == placeholder_title:
                 video.title = cached_meta_row.title
             if not video.duration_seconds:
                 video.duration_seconds = cached_meta_row.duration_seconds
@@ -325,8 +331,14 @@ def process_video_task(self, video_id: str):
                             video.duration_seconds = recovered["duration"]
                         if recovered.get("max_source_height"):
                             video.max_source_height = recovered["max_source_height"]
-                        if not video.title:
-                            video.title = f"Video {youtube_id}"
+                        # Try lightweight oEmbed for the title — leave NULL
+                        # if that fails too (don't poison the DB with a
+                        # placeholder; a future run can fill it in).
+                        if not video.title or video.title == f"Video {youtube_id}":
+                            from app.api.routes import _fetch_youtube_title
+                            t = _fetch_youtube_title(youtube_id)
+                            if t:
+                                video.title = t
                         db.commit()
                     except Exception as probe_err:
                         logger.error(

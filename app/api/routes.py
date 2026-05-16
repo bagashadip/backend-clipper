@@ -22,6 +22,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["clips"])
 
 
+def _fetch_youtube_title(youtube_id: str, timeout: float = 5.0) -> str:
+    """Fetch the title from YouTube's oEmbed endpoint.
+
+    No auth, no bot detection, single tiny request. Returns empty string on
+    any failure so callers can fall back to a placeholder.
+    """
+    import urllib.parse
+    import urllib.request
+    import json as _json
+
+    watch_url = f"https://www.youtube.com/watch?v={youtube_id}"
+    oembed_url = (
+        "https://www.youtube.com/oembed?format=json&url="
+        + urllib.parse.quote(watch_url, safe="")
+    )
+    try:
+        req = urllib.request.Request(
+            oembed_url,
+            headers={"User-Agent": "Mozilla/5.0 (zclip-metadata)"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+        return (data.get("title") or "").strip()
+    except Exception as e:
+        logger.info(f"[oembed] title fetch failed for {youtube_id}: {e}")
+        return ""
+
+
 def _extract_youtube_id(url: str) -> str:
     patterns = [
         r"(?:v=|youtu\.be/)([\w-]{11})",
@@ -50,13 +78,30 @@ def get_youtube_metadata(
       2. Fall back to yt-dlp with skip_download=True (equivalent to
          ``yt-dlp --dump-json --no-download``) — typically 1–2s.
     """
+    try:
+        return _get_youtube_metadata_impl(url, db)
+    except HTTPException:
+        # Pass through structured errors (4xx / 5xx with detail messages)
+        raise
+    except Exception as e:
+        # Last-resort safety net: never leak an unhandled 500 to the client.
+        logger.exception(f"[metadata] Unexpected error for {url}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal error fetching video metadata: {str(e)[:200]}",
+        )
+
+
+def _get_youtube_metadata_impl(url: str, db: Session) -> YoutubeMetadataResponse:
     # Parse the YouTube ID first so we fail fast on garbage URLs
     try:
         youtube_id = get_youtube_video_id(url)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # ── Step 1 + 2: cache lookup ─────────────────────────────────────────
+    s3_key = f"source_videos/{youtube_id}.mp4"
+
+    # ── Step 1: strict cache hit (DB row has all metadata) ───────────────
     cached = (
         db.query(SourceVideo)
         .filter(
@@ -70,21 +115,30 @@ def get_youtube_metadata(
     )
 
     if cached:
-        s3_key = f"source_videos/{youtube_id}.mp4"
-        if check_s3_object_exists(s3_key):
-            return YoutubeMetadataResponse(
-                max_resolution=int(cached.max_source_height or 0),
-                title=cached.title or "",
-                duration=int(cached.duration_seconds or 0),
-                cached=True,
-            )
+        try:
+            if check_s3_object_exists(s3_key):
+                return YoutubeMetadataResponse(
+                    max_resolution=int(cached.max_source_height or 0),
+                    title=cached.title or "",
+                    duration=int(cached.duration_seconds or 0),
+                    cached=True,
+                )
+        except Exception as e:
+            # S3 check failure shouldn't be fatal — fall through to ffprobe
+            # / yt-dlp paths.
+            logger.warning(f"[metadata] S3 head_object failed for {s3_key}: {e}")
 
-    # ── Step 2b: relaxed cache lookup — S3 has the file but DB row may
-    # lack height/duration. Fall back to ffprobe so we can still skip
-    # YouTube entirely.
-    s3_key = f"source_videos/{youtube_id}.mp4"
-    has_s3_file = check_s3_object_exists(s3_key)
-    title_fallback = ""
+    # ── Step 2: relaxed cache — S3 has the file but DB row missing fields.
+    # Probe via presigned URL (only fetches the moov atom, not the whole
+    # file) and persist the result back to the DB for next time.
+    has_s3_file = False
+    try:
+        has_s3_file = check_s3_object_exists(s3_key)
+    except Exception as e:
+        logger.warning(f"[metadata] S3 head_object failed for {s3_key}: {e}")
+
+    real_title = ""
+    any_row: SourceVideo | None = None
     if has_s3_file:
         any_row = (
             db.query(SourceVideo)
@@ -92,21 +146,51 @@ def get_youtube_metadata(
             .order_by(SourceVideo.created_at.desc())
             .first()
         )
-        if any_row and any_row.title:
-            title_fallback = any_row.title
+        # Treat the legacy placeholder ("Video <id>") as missing — retry the
+        # YouTube fetch so the real title eventually replaces it.
+        existing_title = any_row.title if any_row else None
+        if existing_title and existing_title != f"Video {youtube_id}":
+            real_title = existing_title
 
         try:
             from app.tasks.process_video import _probe_s3_video_metadata
             probed = _probe_s3_video_metadata(s3_key, youtube_id)
             if probed.get("duration"):
+                # No real title yet — try yt-dlp's lightweight oEmbed-style
+                # title fetch. It's a single tiny HTTP call (~300ms) and
+                # works even when the heavy extractor is bot-blocked.
+                if not real_title:
+                    real_title = _fetch_youtube_title(youtube_id)
+
+                # Backfill the DB row so subsequent requests hit Step 1.
+                # IMPORTANT: never persist a placeholder title — leave the
+                # column NULL so a later worker run can fill in the real one.
+                if any_row:
+                    if not any_row.duration_seconds:
+                        any_row.duration_seconds = probed["duration"]
+                    if not any_row.max_source_height and probed.get("max_source_height"):
+                        any_row.max_source_height = probed["max_source_height"]
+                    if real_title and (not any_row.title or any_row.title == f"Video {youtube_id}"):
+                        any_row.title = real_title
+                    try:
+                        db.commit()
+                    except Exception as commit_err:
+                        logger.warning(f"[metadata] backfill commit failed: {commit_err}")
+                        db.rollback()
+
                 return YoutubeMetadataResponse(
                     max_resolution=int(probed.get("max_source_height") or 0),
-                    title=title_fallback or f"Video {youtube_id}",
+                    title=real_title or f"Video {youtube_id}",
                     duration=int(probed["duration"]),
                     cached=True,
                 )
+            else:
+                logger.info(
+                    f"[metadata] ffprobe returned no duration for {s3_key}, "
+                    f"falling through to yt-dlp"
+                )
         except Exception as probe_err:
-            logger.warning(f"ffprobe S3 fallback failed for {youtube_id}: {probe_err}")
+            logger.warning(f"[metadata] ffprobe S3 fallback failed for {youtube_id}: {probe_err}")
 
     # ── Step 3: yt-dlp fallback (--dump-json --no-download equivalent) ───
     try:

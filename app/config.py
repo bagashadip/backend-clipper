@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # e.g. https://api.example.com  or  https://34.177.101.239 (with SSL proxy)
     backend_public_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
+    # Regex pattern of additionally-allowed CORS origins (e.g. for ephemeral
+    # Cloudflare quick tunnels: ``https?://.*\.trycloudflare\.com``).
+    # Leave empty in production.
+    cors_origin_regex: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
