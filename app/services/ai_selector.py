@@ -14,6 +14,68 @@ MAX_CLIPS = 15
 MIN_VIRALITY_SCORE = 80
 
 
+# ── Category catalog (Indonesian copy preserved from original prompt) ────
+# Each definition is opt-in: only the user's `selected_categories` are
+# injected into the prompt to save tokens on Claude/DeepSeek calls.
+
+CATEGORY_DEFINITIONS: dict[str, str] = {
+    "humor": (
+        "**1. 😂 LUCU / HUMOR (Skor 88-98)**\n"
+        "- Punchline yang delivered dengan timing pas\n"
+        "- Momen kocak, kesalahan lucu, atau reaksi tak terduga\n"
+        "- Sarkasme cerdas, roasts yang menghibur\n"
+        "- Storytelling komedi dengan setup → punchline\n"
+        "- *Ciri transkrip*: nada cerita berubah lucu, ada kata-kata "
+        "ekspresif, diikuti tawa atau reaksi"
+    ),
+    "shock": (
+        "**2. 😱 KAGET / SHOCK / PLOT TWIST (Skor 90-100)**\n"
+        "- Fakta yang membalikkan ekspektasi total\n"
+        "- Pengakuan mengejutkan atau rahasia yang dibeberkan\n"
+        "- Statistik atau data yang bikin \"WHAT?!\"\n"
+        "- Momen \"aku nggak nyangka...\" yang genuine\n"
+        "- *Ciri transkrip*: nada bicara berubah drastis, jeda dramatis, "
+        "kata-kata seperti \"ternyata...\", \"sebenarnya...\", \"yang mengejutkan...\""
+    ),
+    "controversy": (
+        "**3. 🔥 KONTROVERSI / HOT TAKE / DEBAT (Skor 85-95)**\n"
+        "- Opini tajam yang memancing diskusi\n"
+        "- Kritik pedas terhadap industri/figur/tren\n"
+        "- Pembelaan argumen yang kuat dan tak terduga\n"
+        "- \"Unpopular opinion\" yang bikin orang komen\n"
+        "- *Ciri transkrip*: kata-kata provokatif, konfrontasi, "
+        "\"gua nggak setuju...\", \"masalahnya tuh...\""
+    ),
+    "emotional": (
+        "**4. 😢 HARU / EMOSIONAL / STORYTELLING (Skor 84-92)**\n"
+        "- Kisah perjuangan, kehilangan, atau pengorbanan\n"
+        "- Momen vulnerable yang genuine dan menyentuh\n"
+        "- Cerita yang membuat pendengar ikut merasakan\n"
+        "- *Ciri transkrip*: nada melambat, suara bergetar, kata-kata "
+        "personal \"waktu itu aku...\""
+    ),
+    "insight": (
+        "**5. 💡 INSIGHT / MINDSET SHIFT / TIPS LANGKA (Skor 82-90)**\n"
+        "- Cara pandang baru yang mengubah perspektif\n"
+        "- Tips praktis yang jarang dibahas orang\n"
+        "- \"Hack\" kehidupan atau pekerjaan yang brillian\n"
+        "- Analogi cerdas yang membuat konsep rumit jadi sederhana\n"
+        "- *Ciri transkrip*: \"kuncinya adalah...\", \"yang orang nggak sadar...\", "
+        "\"satu hal yang...\""
+    ),
+    "motivation": (
+        "**6. 🚀 MOTIVASI / INSPIRASI (Skor 80-88)**\n"
+        "- Pesan pembangkit semangat yang tidak klise\n"
+        "- Kisah sukses dengan pelajaran konkrit\n"
+        "- \"Wake up call\" yang genuine\n"
+        "- *Ciri transkrip*: nada bicara bersemangat, ajakan aksi, "
+        "\"kalau aku bisa, kamu juga bisa\""
+    ),
+}
+
+ALL_CATEGORIES = list(CATEGORY_DEFINITIONS.keys())
+
+
 def _clean_and_parse_json(text: str | None) -> list | None:
     """
     Strip markdown code fences from a Gemini response and parse as JSON.
@@ -74,7 +136,9 @@ class ViralClip(BaseModel):
 
 _PROMPT_TEMPLATE = """Kamu adalah seorang **Viral Content Strategist** dan **Senior Video Editor** dengan 10+ tahun pengalaman mengkurasi konten untuk TikTok, Instagram Reels, dan YouTube Shorts. Spesialisasimu adalah menemukan "momen emas" dalam video panjang yang bisa berdiri sendiri sebagai klip viral.
 
-Tugasmu: Analisis transkrip video YouTube berikut dan ekstrak momen-momen terbaik.
+Tugasmu: Analisis transkrip video YouTube berikut dan ekstrak momen-momen terbaik **yang strictly cocok ke salah satu kategori berikut yang DIPILIH user**: {selected_category_labels}.
+
+KLIP YANG TIDAK COCOK KE KATEGORI DI ATAS HARUS DIBUANG, sekalipun menarik.
 
 ---
 ### 🚨 PROTOKOL VERIFIKASI KALIMAT (DIBACA DULU SEBELUM BEKERJA)
@@ -111,53 +175,16 @@ Ini adalah aturan PALING PENTING. Setiap klip yang kamu hasilkan WAJIB melewati 
 9. **MAKSIMAL {max_clips} klip**: Urutkan dari skor tertinggi.
 
 ---
-### 🎯 PANDUAN MENCARI MOMEN VIRAL (Dengan Sub-Kategori Spesifik):
+### 🎯 KATEGORI YANG DIIZINKAN (HANYA YANG DIPILIH USER):
 
-**1. 😂 LUCU / HUMOR (Skor 88-98)**
-- Punchline yang delivered dengan timing pas
-- Momen kocak, kesalahan lucu, atau reaksi tak terduga
-- Sarkasme cerdas, roasts yang menghibur
-- Storytelling komedi dengan setup → punchline
-- *Ciri transkrip*: nada cerita berubah lucu, ada kata-kata ekspresif, diikuti tawa atau reaksi
-
-**2. 😱 KAGET / SHOCK / PLOT TWIST (Skor 90-100)**
-- Fakta yang membalikkan ekspektasi total
-- Pengakuan mengejutkan atau rahasia yang dibeberkan
-- Statistik atau data yang bikin "WHAT?!" 
-- Momen "aku nggak nyangka..." yang genuine
-- *Ciri transkrip*: nada bicara berubah drastis, jeda dramatis, kata-kata seperti "ternyata...", "sebenarnya...", "yang mengejutkan..."
-
-**3. 🔥 KONTROVERSI / HOT TAKE / DEBAT (Skor 85-95)**
-- Opini tajam yang memancing diskusi
-- Kritik pedas terhadap industri/figur/tren
-- Pembelaan argumen yang kuat dan tak terduga
-- "Unpopular opinion" yang bikin orang komen
-- *Ciri transkrip*: kata-kata provokatif, konfrontasi, "gua nggak setuju...", "masalahnya tuh..."
-
-**4. 😢 HARU / EMOSIONAL / STORYTELLING (Skor 84-92)**
-- Kisah perjuangan, kehilangan, atau pengorbanan
-- Momen vulnerable yang genuine dan menyentuh
-- Cerita yang membuat pendengar ikut merasakan
-- *Ciri transkrip*: nada melambat, suara bergetar, kata-kata personal "waktu itu aku..."
-
-**5. 💡 INSIGHT / MINDSET SHIFT / TIPS LANGKA (Skor 82-90)**
-- Cara pandang baru yang mengubah perspektif
-- Tips praktis yang jarang dibahas orang
-- "Hack" kehidupan atau pekerjaan yang brillian
-- Analogi cerdas yang membuat konsep rumit jadi sederhana
-- *Ciri transkrip*: "kuncinya adalah...", "yang orang nggak sadar...", "satu hal yang..."
-
-**6. 🚀 MOTIVASI / INSPIRASI (Skor 80-88)**
-- Pesan pembangkit semangat yang tidak klise
-- Kisah sukses dengan pelajaran konkrit
-- "Wake up call" yang genuine
-- *Ciri transkrip*: nada bicara bersemangat, ajakan aksi, "kalau aku bisa, kamu juga bisa"
+{category_definitions}
 
 ---
 ### ❌ ANTI-POLA — HAL YANG TIDAK BOLEH DIPILIH:
 
 Ini adalah momen-momen yang TERLIHAT seperti konten bagus tapi SEBENARNYA TIDAK:
 
+- **🚫 Tidak cocok ke kategori yang dipilih**: SKIP, sekalipun menarik
 - **🚫 Kalimat putus**: hook bagus tapi `end_time` di tengah kalimat (pelanggaran fatal)
 - **🚫 Sponsor/iklan**: "video ini disponsori...", "link di deskripsi...", "pakai kode promo..."
 - **🚫 Basa-basi**: "hai guys selamat datang...", "jangan lupa like subscribe...", "sebelum mulai..."
@@ -202,22 +229,52 @@ Setiap item dalam array:
 - `"start_time"`: Waktu mulai dalam TOTAL DETIK (INTEGER).
 - `"end_time"`: Waktu selesai dalam TOTAL DETIK (INTEGER). PASTIKAN kalimat SELESAI di sini.
 - `"virality_score"`: Skor 1–100 (INTEGER), mengikuti rubrik di atas.
-- `"reasoning"`: Satu kalimat Bahasa Indonesia — sertakan kategori momen (Lucu/Kaget/Haru/dll) dan kenapa ini viral.
+- `"reasoning"`: Satu kalimat Bahasa Indonesia — sertakan kategori momen (gunakan SALAH SATU dari: {selected_category_labels}) dan kenapa ini viral.
 
-Jika TIDAK ADA klip dengan kalimat selesai + skor ≥ 80, kembalikan: []"""
+Jika TIDAK ADA klip yang cocok ke kategori yang dipilih + kalimat selesai + skor ≥ 80, kembalikan: []"""
 
 
-def _build_prompt(user_tier: str, video_duration: float, transcript_text: str) -> str:
+def _build_prompt(
+    user_tier: str,
+    video_duration: float,
+    transcript_text: str,
+    selected_categories: list[str] | None = None,
+) -> str:
+    """Compose the final prompt with only the user-selected category definitions
+    inlined. Saves substantial tokens on every Claude/DeepSeek call."""
     tier_cfg = TIER_DURATIONS.get(user_tier, TIER_DURATIONS["free"])
     min_dur = tier_cfg["min"]
     max_dur = tier_cfg["max"]
     dur_str = f"{video_duration:.1f}" if video_duration else "unknown"
+
+    # Default to all categories for back-compat with stale Celery payloads
+    if not selected_categories:
+        selected_categories = ALL_CATEGORIES
+
+    # Filter to known categories, preserve user order
+    selected = [c for c in selected_categories if c in CATEGORY_DEFINITIONS]
+    if not selected:
+        selected = ALL_CATEGORIES
+
+    label_to_emoji = {
+        "humor": "Lucu",
+        "shock": "Kaget",
+        "controversy": "Kontroversi",
+        "emotional": "Haru",
+        "insight": "Insight",
+        "motivation": "Motivasi",
+    }
+    selected_labels = ", ".join(label_to_emoji.get(c, c.title()) for c in selected)
+    definitions_block = "\n\n".join(CATEGORY_DEFINITIONS[c] for c in selected)
+
     return (
         _PROMPT_TEMPLATE
         .replace("{min_duration}", str(min_dur))
         .replace("{max_duration}", str(max_dur))
         .replace("{max_clips}", str(MAX_CLIPS))
         .replace("{video_duration}", dur_str)
+        .replace("{selected_category_labels}", selected_labels)
+        .replace("{category_definitions}", definitions_block)
         .replace("{transcript_text}", transcript_text)
     )
 
@@ -468,6 +525,7 @@ def select_viral_clips(
     transcript_text: str,
     video_duration: float = 0,
     user_tier: str = "free",
+    selected_categories: list[str] | None = None,
 ) -> list[dict]:
     """
     Backward-compatible wrapper for process_video_task.
@@ -477,6 +535,7 @@ def select_viral_clips(
         transcript_text,
         video_duration=video_duration,
         user_tier=user_tier,
+        selected_categories=selected_categories,
     )
     return [c.model_dump() for c in clips]
 
@@ -485,11 +544,14 @@ def extract_and_filter_clips(
     transcript_text: str,
     video_duration: float = 0,
     user_tier: str = "free",
+    selected_categories: list[str] | None = None,
 ) -> list[ViralClip]:
     """
     Full pipeline: prompt AI (Claude or DeepSeek) → parse → validate → smart-pad → filter → cap.
 
     Provider is controlled by the ``AI_PROVIDER`` env var (``"claude"`` or ``"deepseek"``).
+    ``selected_categories`` (when provided) restricts the system prompt to only
+    those category definitions, saving Claude tokens.
 
     Returns:
         List of ViralClip objects (score >= 80, padded to min_dur, max 15 items).
@@ -499,12 +561,13 @@ def extract_and_filter_clips(
     max_dur = tier_cfg["max"]
 
     # --- Build prompt ---
-    prompt = _build_prompt(user_tier, video_duration, transcript_text)
+    prompt = _build_prompt(user_tier, video_duration, transcript_text, selected_categories)
 
     # --- Call AI (Claude or DeepSeek based on AI_PROVIDER env var) ---
+    cat_log = ",".join(selected_categories) if selected_categories else "ALL"
     logger.info(
         f"Sending transcript to AI provider '{settings.ai_provider}' "
-        f"(tier={user_tier}, duration={min_dur}-{max_dur}s)"
+        f"(tier={user_tier}, duration={min_dur}-{max_dur}s, categories={cat_log})"
     )
     raw_clips = _call_ai(prompt, user_tier)
 

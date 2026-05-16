@@ -1,6 +1,6 @@
 import re
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session, joinedload
 
@@ -10,10 +10,11 @@ from app.schemas import (
     ProcessURLRequest, ProcessURLResponse,
     SourceVideoResponse, ClipResponse,
     UpdateClipRequest, UpdateSubtitleRequest, CreateSubtitleRequest,
+    YoutubeMetadataResponse, VALID_CATEGORIES,
 )
-from app.services.youtube import check_video_duration
+from app.services.youtube import check_video_duration, extract_metadata, get_youtube_video_id
 from app.services.auth import get_current_user
-from app.services.storage import generate_presigned_url, upload_to_s3
+from app.services.storage import generate_presigned_url, upload_to_s3, check_s3_object_exists
 from app.tasks.process_video import process_video_task
 
 router = APIRouter(prefix="/api", tags=["clips"])
@@ -28,6 +29,77 @@ def _extract_youtube_id(url: str) -> str:
         if match:
             return match.group(1)
     raise HTTPException(status_code=400, detail="Could not extract YouTube video ID")
+
+
+# ── Pre-fetch metadata endpoint ────────────────────────────────────────────
+
+@router.get("/youtube/metadata", response_model=YoutubeMetadataResponse)
+def get_youtube_metadata(
+    url: str = Query(..., description="Full YouTube URL"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Fetch lightweight metadata (title, duration, max resolution) for a
+    YouTube video, used by the wizard to gate the resolution step.
+
+    Resolution order:
+      1. Check our DB / S3 cache. If the source video is already cached,
+         return its stored metadata WITHOUT calling YouTube.
+      2. Fall back to yt-dlp with skip_download=True (equivalent to
+         ``yt-dlp --dump-json --no-download``) — typically 1–2s.
+    """
+    # Parse the YouTube ID first so we fail fast on garbage URLs
+    try:
+        youtube_id = get_youtube_video_id(url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # ── Step 1 + 2: cache lookup ─────────────────────────────────────────
+    cached = (
+        db.query(SourceVideo)
+        .filter(
+            SourceVideo.youtube_id == youtube_id,
+            SourceVideo.storage_url.isnot(None),
+            SourceVideo.max_source_height.isnot(None),
+            SourceVideo.duration_seconds.isnot(None),
+        )
+        .order_by(SourceVideo.created_at.desc())
+        .first()
+    )
+
+    if cached:
+        s3_key = f"source_videos/{youtube_id}.mp4"
+        if check_s3_object_exists(s3_key):
+            return YoutubeMetadataResponse(
+                max_resolution=int(cached.max_source_height or 0),
+                title=cached.title or "",
+                duration=int(cached.duration_seconds or 0),
+                cached=True,
+            )
+
+    # ── Step 3: yt-dlp fallback (--dump-json --no-download equivalent) ───
+    try:
+        meta = extract_metadata(url)
+    except ValueError as e:
+        msg = str(e).lower()
+        if "sign in" in msg or "bot" in msg or "confirm you" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "YouTube is blocking automated access for this video. "
+                    "Try a different video or wait a few minutes."
+                ),
+            )
+        raise HTTPException(status_code=502, detail=f"YouTube metadata fetch failed: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"YouTube metadata fetch failed: {e}")
+
+    return YoutubeMetadataResponse(
+        max_resolution=int(meta.get("max_source_height") or 0),
+        title=meta.get("title", ""),
+        duration=int(meta.get("duration", 0) or 0),
+        cached=False,
+    )
 
 
 @router.post("/process-url", response_model=ProcessURLResponse)
@@ -55,11 +127,26 @@ def process_url(
         )
     # --- END GATEKEEPER ---
 
+    # --- TIER GATE for resolution ---
+    requested_resolution = request.resolution or 480
+    if user.subscription_tier == "free" and requested_resolution > 480:
+        raise HTTPException(
+            status_code=403,
+            detail="HD resolution (720p / 1080p) requires a Pro subscription.",
+        )
+
+    # Default categories: all 6 if none provided (back-compat with older clients)
+    selected = request.selected_categories or sorted(VALID_CATEGORIES)
+    caption_style = request.caption_style or "classic"
+
     video = SourceVideo(
         user_id=user.id,
         youtube_url=request.youtube_url,
         youtube_id=youtube_id,
         duration_seconds=video_duration,
+        selected_categories=",".join(selected),
+        target_resolution=requested_resolution,
+        target_caption_style=caption_style,
         status="pending",
     )
     db.add(video)

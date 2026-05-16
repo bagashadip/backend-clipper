@@ -312,10 +312,25 @@ def process_video_task(self, video_id: str):
         user = db.query(User).filter(User.id == video.user_id).first()
         user_tier = user.subscription_tier if user else "free"
 
+        # Resolve per-submission processing config (with safe defaults for
+        # back-compat with stale Celery payloads).
+        selected_categories: list[str] | None = None
+        if video.selected_categories:
+            selected_categories = [
+                c.strip() for c in video.selected_categories.split(",") if c.strip()
+            ]
+        target_resolution = int(video.target_resolution or 480)
+        target_caption_style = video.target_caption_style or "classic"
+
+        # Map resolution → quality string used by Clip.quality enum
+        RES_TO_QUALITY = {480: "480p", 720: "720p", 1080: "1080p"}
+        target_quality = RES_TO_QUALITY.get(target_resolution, "480p")
+
         selected_clips = select_viral_clips(
             formatted_transcript,
             video_duration=video.duration_seconds or 0,
             user_tier=user_tier,
+            selected_categories=selected_categories,
         )
 
         # Step 4: Create clips and subtitles in DB
@@ -348,6 +363,8 @@ def process_video_task(self, video_id: str):
                 end_time=clip_data["end_time"],
                 virality_score=clip_data.get("virality_score"),
                 reasoning=clip_data.get("reasoning", ""),
+                caption_style=target_caption_style,
+                quality=target_quality,
                 status="pending",
             )
             db.add(clip)

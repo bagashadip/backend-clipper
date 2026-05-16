@@ -42,7 +42,22 @@ def _init_db(max_retries: int = 5, retry_delay: float = 3.0):
             time.sleep(retry_delay)
 
 
+def _run_migrations():
+    """Apply lightweight idempotent SQL migrations from migrations/*.sql.
+
+    Delegates to ``app.migrations_runner`` which uses ``exec_driver_sql`` so
+    multi-statement scripts (e.g. ``DO $$ ... $$`` blocks) work, and keeps a
+    ledger so already-applied files are skipped.
+    """
+    try:
+        from app.migrations_runner import run_pending_migrations
+        run_pending_migrations()
+    except Exception as e:
+        logger.warning(f"Migration runner failed: {e}. Continuing startup.")
+
+
 _init_db()
+_run_migrations()
 
 app = FastAPI(title="AI Video Clipper", version="1.0.0")
 

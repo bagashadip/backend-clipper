@@ -36,6 +36,10 @@ class SourceVideo(Base):
     duration_seconds = Column(Float)
     max_source_height = Column(Integer)
     storage_url = Column(Text)  # S3 URL for cached source video
+    # User-selected processing config (set during /process-url, read by celery)
+    selected_categories = Column(Text)   # comma-separated list, e.g. "humor,insight"
+    target_resolution = Column(Integer)  # 480 / 720 / 1080
+    target_caption_style = Column(String(40))  # "classic" / "hormozi" / etc.
     status = Column(
         SAEnum("pending", "downloading", "transcribing", "analyzing", "rendering", "completed", "failed",
                name="video_status"),
