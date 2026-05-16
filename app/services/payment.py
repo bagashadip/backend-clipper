@@ -26,19 +26,32 @@ SUCCESS_STATUSES = {"settlement", "capture"}
 
 
 def _is_sandbox() -> bool:
-    """Detect Midtrans environment from the server key prefix.
+    """Determine Midtrans environment.
 
-    Sandbox keys begin with ``SB-Mid-server-`` while production keys are
-    ``Mid-server-``. Falling back to sandbox on ambiguous values is the safer
-    default for development.
+    Priority:
+      1. Explicit ``MIDTRANS_ENV`` env var (``sandbox`` or ``production``).
+      2. Key prefix heuristic — ``SB-`` indicates sandbox.
+      3. Default: sandbox (safer default for dev).
+
+    NOTE: Midtrans **production** server keys typically start with
+    ``Mid-server-``, but their **sandbox** keys ALSO often start with
+    ``Mid-server-`` rather than ``SB-Mid-server-``. The prefix heuristic
+    alone is therefore unreliable; always set ``MIDTRANS_ENV`` explicitly
+    in your ``.env``.
     """
     settings = get_settings()
+    explicit = (settings.midtrans_env or "").strip().lower()
+    if explicit in ("sandbox", "sb", "dev", "development"):
+        return True
+    if explicit in ("production", "prod", "live"):
+        return False
+
+    # Fallback heuristic
     key = (settings.midtrans_server_key or "").strip()
     if key.startswith("SB-"):
         return True
-    if key.startswith("Mid-server-"):
-        return False
-    return True  # default to sandbox if unsure
+    # Anything ambiguous → sandbox (safe default for unintended dev runs)
+    return True
 
 
 def get_midtrans_api_base() -> str:

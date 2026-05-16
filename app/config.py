@@ -28,6 +28,9 @@ class Settings(BaseSettings):
 
     # Midtrans Integration
     midtrans_server_key: str = ""
+    # Explicit environment switch: "sandbox" or "production".
+    # Defaults to sandbox for safety in dev. Override via MIDTRANS_ENV env var.
+    midtrans_env: str = "sandbox"
 
     # Public-facing URLs
     # Set BACKEND_PUBLIC_URL to the HTTPS URL of the backend in production
