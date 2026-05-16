@@ -1,5 +1,6 @@
 import re
 from uuid import UUID
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session, joinedload
@@ -17,6 +18,7 @@ from app.services.auth import get_current_user
 from app.services.storage import generate_presigned_url, upload_to_s3, check_s3_object_exists
 from app.tasks.process_video import process_video_task
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["clips"])
 
 
@@ -77,6 +79,35 @@ def get_youtube_metadata(
                 cached=True,
             )
 
+    # ── Step 2b: relaxed cache lookup — S3 has the file but DB row may
+    # lack height/duration. Fall back to ffprobe so we can still skip
+    # YouTube entirely.
+    s3_key = f"source_videos/{youtube_id}.mp4"
+    has_s3_file = check_s3_object_exists(s3_key)
+    title_fallback = ""
+    if has_s3_file:
+        any_row = (
+            db.query(SourceVideo)
+            .filter(SourceVideo.youtube_id == youtube_id)
+            .order_by(SourceVideo.created_at.desc())
+            .first()
+        )
+        if any_row and any_row.title:
+            title_fallback = any_row.title
+
+        try:
+            from app.tasks.process_video import _probe_s3_video_metadata
+            probed = _probe_s3_video_metadata(s3_key, youtube_id)
+            if probed.get("duration"):
+                return YoutubeMetadataResponse(
+                    max_resolution=int(probed.get("max_source_height") or 0),
+                    title=title_fallback or f"Video {youtube_id}",
+                    duration=int(probed["duration"]),
+                    cached=True,
+                )
+        except Exception as probe_err:
+            logger.warning(f"ffprobe S3 fallback failed for {youtube_id}: {probe_err}")
+
     # ── Step 3: yt-dlp fallback (--dump-json --no-download equivalent) ───
     try:
         meta = extract_metadata(url)
@@ -111,10 +142,46 @@ def process_url(
     youtube_id = _extract_youtube_id(request.youtube_url)
 
     # --- QUOTA GATEKEEPER ---
-    try:
-        video_duration = check_video_duration(request.youtube_url)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    # Cache-first: avoid hitting YouTube when we already know the duration.
+    video_duration: int | None = None
+    cached_row = (
+        db.query(SourceVideo)
+        .filter(
+            SourceVideo.youtube_id == youtube_id,
+            SourceVideo.duration_seconds.isnot(None),
+        )
+        .order_by(SourceVideo.created_at.desc())
+        .first()
+    )
+    if cached_row and cached_row.duration_seconds:
+        video_duration = int(cached_row.duration_seconds)
+        logger.info(
+            f"[process-url] Using cached duration {video_duration}s for {youtube_id} "
+            f"(no YouTube hit)"
+        )
+    else:
+        try:
+            video_duration = check_video_duration(request.youtube_url)
+        except ValueError as e:
+            # If YouTube blocks us but we already cached the source video, fall
+            # back to ffprobe on the S3 file.
+            s3_key = f"source_videos/{youtube_id}.mp4"
+            if check_s3_object_exists(s3_key):
+                try:
+                    from app.tasks.process_video import _probe_s3_video_metadata
+                    probed = _probe_s3_video_metadata(s3_key, youtube_id)
+                    if probed.get("duration"):
+                        video_duration = int(probed["duration"])
+                        logger.info(
+                            f"[process-url] Recovered duration via ffprobe on S3 "
+                            f"cache for {youtube_id}: {video_duration}s"
+                        )
+                except Exception as probe_err:
+                    logger.warning(
+                        f"[process-url] ffprobe S3 fallback failed: {probe_err}"
+                    )
+            if not video_duration:
+                raise HTTPException(status_code=400, detail=str(e))
 
     if video_duration > user.quota_seconds_remaining:
         raise HTTPException(

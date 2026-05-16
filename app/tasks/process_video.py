@@ -12,6 +12,69 @@ from app.services.storage import upload_to_s3, check_s3_object_exists, get_s3_ur
 logger = logging.getLogger(__name__)
 
 
+def _probe_s3_video_metadata(s3_key: str, youtube_id: str) -> dict:
+    """Recover metadata (duration, max height) from an S3-cached video using
+    ``ffprobe``. Used when YouTube is blocking us but we already have the
+    full video cached in S3.
+
+    Returns a dict with ``duration`` (seconds, int) and ``max_source_height``
+    (px, int). Returns empty values on failure.
+    """
+    import subprocess
+    import json
+    import tempfile
+
+    settings_local = None  # populated lazily below
+    output_dir = tempfile.mkdtemp(prefix="clipper_probe_")
+    video_path = os.path.join(output_dir, f"{youtube_id}.mp4")
+
+    try:
+        from app.config import get_settings
+        settings_local = get_settings()
+        client = _get_s3_client()
+        client.download_file(settings_local.aws_s3_bucket, s3_key, video_path)
+
+        # ffprobe → JSON
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-print_format", "json",
+                "-show_format", "-show_streams",
+                video_path,
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"ffprobe failed: {result.stderr[-300:]}")
+
+        data = json.loads(result.stdout)
+        video_stream = next(
+            (s for s in data.get("streams", []) if s.get("codec_type") == "video"),
+            None,
+        )
+        if not video_stream:
+            return {}
+
+        duration = float(data.get("format", {}).get("duration", 0)) or float(
+            video_stream.get("duration", 0)
+        )
+        height = int(video_stream.get("height", 0) or 0)
+
+        return {
+            "duration": int(duration) if duration > 0 else 0,
+            "max_source_height": height if height > 0 else None,
+        }
+
+    finally:
+        try:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+            if os.path.exists(output_dir):
+                os.rmdir(output_dir)
+        except OSError:
+            pass
+
+
 def extract_audio_from_s3_video(s3_key: str, youtube_id: str) -> str:
     """
     Download cached source video from S3 and extract audio using FFmpeg.
@@ -213,12 +276,71 @@ def process_video_task(self, video_id: str):
         video.status = "downloading"
         db.commit()
 
-        # Extract metadata first
-        metadata = extract_metadata(video.youtube_url)
-        video.title = metadata.get("title")
-        video.duration_seconds = metadata.get("duration")
-        video.max_source_height = metadata.get("max_source_height")
-        db.commit()
+        # ── Metadata resolution (cache-first, no YouTube hit when avoidable) ──
+        # Try DB cache first: any prior row with this youtube_id that has
+        # title/duration/max_source_height already populated.
+        cached_meta_row = (
+            db.query(SourceVideo)
+            .filter(
+                SourceVideo.youtube_id == youtube_id,
+                SourceVideo.duration_seconds.isnot(None),
+                SourceVideo.title.isnot(None),
+            )
+            .order_by(SourceVideo.created_at.desc())
+            .first()
+        )
+
+        if cached_meta_row:
+            logger.info(
+                f"[Metadata cache HIT] Reusing metadata from row "
+                f"{cached_meta_row.id} for {youtube_id} (no YouTube hit)"
+            )
+            if not video.title:
+                video.title = cached_meta_row.title
+            if not video.duration_seconds:
+                video.duration_seconds = cached_meta_row.duration_seconds
+            if not video.max_source_height:
+                video.max_source_height = cached_meta_row.max_source_height
+            db.commit()
+        else:
+            # No cached metadata — fall back to yt-dlp.
+            try:
+                metadata = extract_metadata(video.youtube_url)
+                video.title = metadata.get("title")
+                video.duration_seconds = metadata.get("duration")
+                video.max_source_height = metadata.get("max_source_height")
+                db.commit()
+            except Exception as e:
+                # If YouTube blocks us BUT we already have the source video in
+                # S3 from a previous successful run, we can still process the
+                # clip using ffprobe to fill in the missing fields.
+                logger.warning(f"YouTube metadata fetch failed: {e}")
+                from app.services.storage import check_s3_object_exists
+                s3_key = f"source_videos/{youtube_id}.mp4"
+                if check_s3_object_exists(s3_key):
+                    logger.info(
+                        f"[Metadata recovery] Falling back to ffprobe on S3-cached video"
+                    )
+                    try:
+                        recovered = _probe_s3_video_metadata(s3_key, youtube_id)
+                        if recovered.get("duration"):
+                            video.duration_seconds = recovered["duration"]
+                        if recovered.get("max_source_height"):
+                            video.max_source_height = recovered["max_source_height"]
+                        if not video.title:
+                            video.title = f"Video {youtube_id}"
+                        db.commit()
+                    except Exception as probe_err:
+                        logger.error(
+                            f"[Metadata recovery] ffprobe fallback also failed: {probe_err}"
+                        )
+                        raise ValueError(
+                            f"Cannot fetch metadata from YouTube and no usable cache: {e}"
+                        )
+                else:
+                    raise ValueError(
+                        f"Cannot fetch metadata from YouTube and no S3 cache: {e}"
+                    )
 
         # Check if source video is cached in S3
         cached_video_url, is_cached = get_or_cache_source_video(
