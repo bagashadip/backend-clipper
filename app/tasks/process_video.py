@@ -244,7 +244,6 @@ def cache_source_video_to_s3(youtube_url: str, youtube_id: str, quality: str = "
     finally:
         # Cleanup local file
         if local_video_path:
-            import os
             try:
                 os.remove(local_video_path)
                 parent_dir = os.path.dirname(local_video_path)
@@ -315,7 +314,6 @@ def process_video_task(self, video_id: str):
                 # S3 from a previous successful run, we can still process the
                 # clip using ffprobe to fill in the missing fields.
                 logger.warning(f"YouTube metadata fetch failed: {e}")
-                from app.services.storage import check_s3_object_exists
                 s3_key = f"source_videos/{youtube_id}.mp4"
                 if check_s3_object_exists(s3_key):
                     logger.info(
@@ -537,7 +535,6 @@ def process_video_task(self, video_id: str):
     finally:
         # Cleanup audio file
         if audio_path:
-            import os
             try:
                 os.remove(audio_path)
                 logger.info(f"Cleaned up audio file: {audio_path}")
@@ -548,7 +545,6 @@ def process_video_task(self, video_id: str):
 
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=30)
 def render_clip_task(self, clip_id: str, cached_video_url: str | None = None):
-    import os
     db = SessionLocal()
 
     try:
