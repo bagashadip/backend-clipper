@@ -1,38 +1,64 @@
+"""Celery worker tasks for payment processing.
+
+The Midtrans webhook handler enqueues ``process_midtrans_webhook`` so that
+the HTTP response returns immediately. The actual DB update (transaction
+status + tier upgrade) runs here in the worker.
+
+All upgrades go through ``app.services.payment.apply_payment_to_user`` so
+the synchronous ``POST /api/payment/verify`` endpoint and this webhook share
+the same idempotent logic.
+"""
+
+import logging
+
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
-from app.models import Transaction, User
-import logging
+from app.models import Transaction
+from app.services.payment import apply_payment_to_user
 
 logger = logging.getLogger(__name__)
 
+
 @celery_app.task(name="tasks.process_midtrans_webhook")
 def process_midtrans_webhook(payload: dict):
+    """Process a verified Midtrans webhook payload (signature already
+    validated by the HTTP handler before enqueueing).
+    """
     order_id = payload.get("order_id")
     transaction_status = payload.get("transaction_status")
-    
+    payment_type = payload.get("payment_type")
+
+    if not order_id or not transaction_status:
+        logger.warning(f"[webhook] Skipping incomplete payload: {payload}")
+        return
+
     db = SessionLocal()
     try:
-        transaction = db.query(Transaction).filter(Transaction.order_id == order_id).first()
+        transaction = (
+            db.query(Transaction).filter(Transaction.order_id == order_id).first()
+        )
         if not transaction:
-            logger.error(f"Transaction with order_id {order_id} not found.")
+            logger.error(
+                f"[webhook] Transaction with order_id={order_id} not found"
+            )
             return
 
-        transaction.status = transaction_status
-        transaction.payment_type = payload.get("payment_type")
-        
-        # Process ZClip tier upgrade if transaction is successful
-        if transaction_status in ["settlement", "capture"]:
-            user = db.query(User).filter(User.id == transaction.user_id).first()
-            if user:
-                # Upgrade user to pro and add quota as per rules
-                user.subscription_tier = "pro"
-                user.quota_seconds_remaining += 18000  # Example quota increment
-                logger.info(f"User {user.id} tier upgraded to pro.")
-        
+        upgraded, msg = apply_payment_to_user(
+            db,
+            transaction,
+            transaction_status,
+            payment_type=payment_type,
+        )
         db.commit()
+        logger.info(
+            f"[webhook] order_id={order_id} status={transaction_status} → {msg}"
+        )
+
     except Exception as e:
         db.rollback()
-        logger.error(f"Error processing midtrans webhook for order_id {order_id}: {e}")
-        raise e
+        logger.exception(
+            f"[webhook] Failed processing order_id={order_id}: {e}"
+        )
+        raise
     finally:
         db.close()
