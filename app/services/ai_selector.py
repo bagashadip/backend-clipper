@@ -634,3 +634,111 @@ def extract_and_filter_clips(
         f"durations: {[round(c.duration, 1) for c in validated]})"
     )
     return validated
+
+
+# ---------------------------------------------------------------------------
+# Sentence-Boundary Snapping (post-AI fix for broken endings)
+# ---------------------------------------------------------------------------
+
+# Characters that indicate a natural sentence/thought boundary
+_SENTENCE_ENDERS = {".", "!", "?", "。", "…"}
+# Words that typically signal a thought is complete (Indonesian + English)
+_BOUNDARY_WORDS = {
+    "gitu", "sih", "ya", "kan", "loh", "nih", "dong", "deh",
+    "right", "yeah", "so", "okay", "ok",
+}
+
+# Maximum seconds we're willing to extend a clip to find a sentence boundary.
+# Beyond this, the AI's pick was just bad — we leave it as-is.
+_MAX_EXTENSION_SEC = 8.0
+
+
+def snap_clip_to_sentence_boundary(
+    clip_start: float,
+    clip_end: float,
+    word_timestamps: list[dict],
+    max_duration: float = 60.0,
+    video_duration: float = 0.0,
+) -> float:
+    """Extend ``clip_end`` forward to the nearest sentence boundary.
+
+    Looks at the words immediately after the AI's proposed ``end_time`` and
+    finds the first natural stopping point (punctuation, long pause, or
+    boundary word). Returns the adjusted ``end_time``.
+
+    If no good boundary is found within ``_MAX_EXTENSION_SEC``, returns the
+    original ``clip_end`` unchanged.
+
+    Args:
+        clip_start: Start time of the clip (seconds).
+        clip_end: AI-proposed end time (seconds).
+        word_timestamps: Full transcript word list with ``start``/``end`` keys.
+        max_duration: Hard cap on clip duration (tier-based).
+        video_duration: Total video length (for clamping).
+
+    Returns:
+        Adjusted end_time (>= original clip_end).
+    """
+    if not word_timestamps:
+        return clip_end
+
+    # Find the word closest to clip_end (the last word the AI intended to include)
+    end_idx = -1
+    for i, w in enumerate(word_timestamps):
+        if w["end"] <= clip_end + 0.5:  # 0.5s tolerance for rounding
+            end_idx = i
+        elif w["start"] > clip_end + 1.0:
+            break
+
+    if end_idx < 0:
+        return clip_end
+
+    # Check if the clip already ends at a sentence boundary
+    last_word = word_timestamps[end_idx]["word"].strip()
+    if any(last_word.endswith(p) for p in _SENTENCE_ENDERS):
+        return clip_end  # Already good
+    if last_word.lower().rstrip(".,!?") in _BOUNDARY_WORDS:
+        return clip_end  # Ends on a filler that signals completion
+
+    # Scan forward from end_idx to find the next sentence boundary
+    hard_limit = min(
+        clip_end + _MAX_EXTENSION_SEC,
+        clip_start + max_duration,
+        video_duration if video_duration > 0 else float("inf"),
+    )
+
+    for i in range(end_idx + 1, len(word_timestamps)):
+        w = word_timestamps[i]
+        if w["end"] > hard_limit:
+            break
+
+        word_text = w["word"].strip()
+
+        # Check for sentence-ending punctuation
+        if any(word_text.endswith(p) for p in _SENTENCE_ENDERS):
+            logger.debug(
+                f"Snapped end_time {clip_end:.1f}s → {w['end']:.1f}s "
+                f"(found '{word_text}' at boundary)"
+            )
+            return w["end"]
+
+        # Check for a long pause after this word (>0.5s gap to next word)
+        if i + 1 < len(word_timestamps):
+            gap = word_timestamps[i + 1]["start"] - w["end"]
+            if gap > 0.5:
+                logger.debug(
+                    f"Snapped end_time {clip_end:.1f}s → {w['end']:.1f}s "
+                    f"(found {gap:.2f}s pause after '{word_text}')"
+                )
+                return w["end"]
+
+        # Check for boundary words
+        if word_text.lower().rstrip(".,!?") in _BOUNDARY_WORDS:
+            logger.debug(
+                f"Snapped end_time {clip_end:.1f}s → {w['end']:.1f}s "
+                f"(boundary word '{word_text}')"
+            )
+            return w["end"]
+
+    # No good boundary found within limits — return original
+    return clip_end
