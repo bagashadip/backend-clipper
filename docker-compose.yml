@@ -42,6 +42,10 @@ services:
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
+    # Localhost-only publish so the host-network worker can reach us
+    # without exposing Redis to the public internet.
+    ports:
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -53,8 +57,10 @@ services:
     image: brainicism/bgutil-ytdlp-pot-provider
     restart: unless-stopped
     init: true
+    # Localhost-only publish so the host-network worker can reach us
+    # without exposing the provider externally.
     ports:
-      - "4416:4416"
+      - "127.0.0.1:4416:4416"
 
   # ── FastAPI API server (CPU — no GPU needed) ──────────────────────────────
   api:
@@ -90,12 +96,20 @@ services:
       retries: 5
 
   # ── Celery worker  (CPU — no GPU needed) ──────────────────────────
+  # Runs with network_mode: host so we can bind outbound connections to
+  # rotating IPv6 addresses from the host's /64 block (used by yt-dlp's
+  # source-address rotation in app/services/ipv6_rotator.py).
+  #
+  # Side effect: the worker can no longer use Docker's internal DNS for
+  # service-to-service communication. We must reach postgres/redis/bgutil
+  # via their published ports on localhost.
   worker:
     build:
       context: .
       dockerfile: Dockerfile
       target: final
     restart: unless-stopped
+    network_mode: "host"
     command:
       - "celery"
       - "-A"
@@ -105,10 +119,13 @@ services:
       - "--concurrency=2"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://postgres:T33d3vsu1yiDksGjozTj@postgres:5432/clipper
-      REDIS_URL: redis://redis:6379/0
-      BGUTIL_PROVIDER_URL: http://bgutil-provider:4416
+      # All addresses are on the host because of network_mode: host
+      DATABASE_URL: postgresql://postgres:T33d3vsu1yiDksGjozTj@127.0.0.1:5432/clipper
+      REDIS_URL: redis://127.0.0.1:6379/0
+      BGUTIL_PROVIDER_URL: http://127.0.0.1:4416
       GROQ_API_KEY: ${GROQ_API_KEY}
+      # IPv6 source-address rotation prefix (your VPS's /64 block)
+      IPV6_ROTATION_PREFIX: ${IPV6_ROTATION_PREFIX:-}
     volumes:
       - whisper_cache:/app/.cache/huggingface
       - ytdlp_cache:/app/.cache/yt-dlp
