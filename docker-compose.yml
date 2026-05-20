@@ -76,6 +76,10 @@ services:
       HF_HOME: /app/.cache/huggingface
       BGUTIL_PROVIDER_URL: http://bgutil-provider:4416
       GROQ_API_KEY: ${GROQ_API_KEY}
+      # Disable IPv6 rotation in the API container — it's on Docker bridge
+      # networking and can't bind to host IPv6 addresses. Only the worker
+      # (network_mode: host) should rotate.
+      IPV6_ROTATION_PREFIX: ""
     ports:
       - "8000:8000"
     volumes:
