@@ -135,8 +135,6 @@ def _build_ydl_opts(
         "fragment_retries": 3,
         # Allow yt-dlp to download remote JS solvers for YouTube
         "remote_components": ["ejs:github"],
-        # Force IPv6
-        "force_ipv6": True,
         # Extractor args: use web client + bgutil PO token provider
         "extractor_args": {
             "youtube": {
@@ -161,14 +159,13 @@ def _build_ydl_opts(
     # Returns {} when disabled or on failure → yt-dlp uses default routing.
     # Requires the worker container to run with network_mode: host so it
     # can bind to the host's IPv6 block.
+    #
+    # NOTE: We do NOT set force_ipv6 here. source_address already forces the
+    # connection over IPv6, and force_ipv6 additionally forces DNS resolution
+    # to AAAA-only which breaks on hosts with IPv4-only resolvers.
     rotation_opt = get_ydl_source_address_opt()
     if rotation_opt:
         opts.update(rotation_opt)
-    else:
-        # No rotation available — drop force_ipv6 so we fall back to plain
-        # IPv4/IPv6 dual-stack, avoiding "Network unreachable" errors on
-        # hosts without IPv6 routing.
-        opts.pop("force_ipv6", None)
 
     # Merge any extra options
     if extra_opts:
