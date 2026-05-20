@@ -6,8 +6,6 @@ import re
 import yt_dlp
 import time
 
-from app.services.ipv6_rotator import get_ydl_source_address_opt
-
 logger = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────
@@ -135,6 +133,8 @@ def _build_ydl_opts(
         "fragment_retries": 3,
         # Allow yt-dlp to download remote JS solvers for YouTube
         "remote_components": ["ejs:github"],
+        # Force IPv6
+        "force_ipv6": True,
         # Extractor args: use web client + bgutil PO token provider
         "extractor_args": {
             "youtube": {
@@ -153,19 +153,6 @@ def _build_ydl_opts(
     if cookies_path:
         opts["cookiefile"] = cookies_path
         logger.info(f"[yt-dlp] Using cookies: {cookies_path}")
-
-    # Layer 4: IPv6 source-address rotation (best-effort).
-    # Picks a random IPv6 from IPV6_ROTATION_PREFIX (e.g. 2001:19f0:4400:62f3::/64).
-    # Returns {} when disabled or on failure → yt-dlp uses default routing.
-    # Requires the worker container to run with network_mode: host so it
-    # can bind to the host's IPv6 block.
-    #
-    # NOTE: We do NOT set force_ipv6 here. source_address already forces the
-    # connection over IPv6, and force_ipv6 additionally forces DNS resolution
-    # to AAAA-only which breaks on hosts with IPv4-only resolvers.
-    rotation_opt = get_ydl_source_address_opt()
-    if rotation_opt:
-        opts.update(rotation_opt)
 
     # Merge any extra options
     if extra_opts:

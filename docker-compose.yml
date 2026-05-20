@@ -133,6 +133,10 @@ services:
     volumes:
       - whisper_cache:/app/.cache/huggingface
       - ytdlp_cache:/app/.cache/yt-dlp
+      # Mount host's resolv.conf so IPv6 DNS resolution works inside the
+      # container (Docker generates its own resolv.conf by default, which
+      # may not have IPv6 nameservers).
+      - /etc/resolv.conf:/etc/resolv.conf:ro
     depends_on:
       postgres:
         condition: service_healthy
