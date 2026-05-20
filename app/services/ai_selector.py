@@ -221,6 +221,31 @@ TRANSKRIP:
 {transcript_text}
 
 ---
+### ⚠️ FINAL SELF-CHECK (WAJIB DILAKUKAN SEBELUM OUTPUT):
+
+Sebelum kamu mengeluarkan JSON, periksa SETIAP klip satu per satu:
+
+1. Buka transkrip di `end_time` yang kamu pilih.
+2. Baca kata TERAKHIR yang masuk ke dalam klip. Apakah kalimat itu SELESAI?
+3. Jika kata terakhir adalah kata sambung (dan, tapi, karena, yang, untuk, jadi, maka, kalau, supaya, ketika) atau kata kerja tanpa objek — KALIMAT BELUM SELESAI. MAJUKAN `end_time` sampai kalimat tuntas.
+
+**CONTOH SALAH (JANGAN DITIRU):**
+```
+end_time = 45 → kata terakhir: "karena" → ❌ KALIMAT PUTUS
+end_time = 52 → kata terakhir: "untuk" → ❌ KALIMAT PUTUS  
+end_time = 38 → kata terakhir: "yang" → ❌ KALIMAT PUTUS
+```
+
+**CONTOH BENAR:**
+```
+end_time = 47 → kata terakhir: "berhasil." → ✅ KALIMAT SELESAI
+end_time = 55 → kata terakhir: "gitu." → ✅ KALIMAT SELESAI
+end_time = 41 → kata terakhir: "banget" (diikuti jeda panjang) → ✅ IDE SELESAI
+```
+
+Jika kamu menemukan klip yang gagal self-check ini, PERBAIKI `end_time`-nya sebelum output. Jangan pernah mengeluarkan klip dengan kalimat putus.
+
+---
 ### FORMAT OUTPUT (JSON Array):
 
 Kembalikan HANYA JSON array. Tidak boleh ada teks lain sebelum atau sesudahnya.

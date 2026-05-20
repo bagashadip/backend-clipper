@@ -5,7 +5,7 @@ from app.database import SessionLocal
 from app.models import SourceVideo, Clip, Subtitle, User
 from app.services.youtube import download_audio, extract_metadata, get_youtube_video_id, download_full_video
 from app.services.transcription import transcribe_audio
-from app.services.ai_selector import select_viral_clips, format_whisper_to_text, snap_clip_to_sentence_boundary
+from app.services.ai_selector import select_viral_clips, format_whisper_to_text
 from app.services.video_renderer import render_clip, generate_preview_from_clip, generate_thumbnail
 from app.services.storage import upload_to_s3, check_s3_object_exists, get_s3_url, generate_presigned_url, _get_s3_client
 
@@ -464,32 +464,6 @@ def process_video_task(self, video_id: str):
             user_tier=user_tier,
             selected_categories=selected_categories,
         )
-
-        # ── Sentence-boundary snapping ────────────────────────────────────
-        # The AI often cuts clips mid-sentence. Use the actual word-level
-        # timestamps to extend end_time to the nearest natural pause or
-        # punctuation mark (up to 8s extra, capped by tier max duration).
-        from app.services.ai_selector import TIER_DURATIONS as _TIER_DURS
-        _tier_cfg = _TIER_DURS.get(user_tier, _TIER_DURS["free"])
-        _max_dur = _tier_cfg["max"]
-        _vid_dur = video.duration_seconds or 0
-
-        for c in selected_clips:
-            original_end = c["end_time"]
-            snapped_end = snap_clip_to_sentence_boundary(
-                clip_start=c["start_time"],
-                clip_end=c["end_time"],
-                word_timestamps=transcript["words"],
-                max_duration=_max_dur + 5,  # allow slight overshoot for sentence completion
-                video_duration=_vid_dur,
-            )
-            if snapped_end > original_end:
-                logger.info(
-                    f"Sentence-snap '{c['title']}': "
-                    f"end {original_end:.1f}s → {snapped_end:.1f}s "
-                    f"(+{snapped_end - original_end:.1f}s)"
-                )
-                c["end_time"] = snapped_end
 
         # Step 4: Create clips and subtitles in DB
         # Filter out clips with timestamps beyond video duration
