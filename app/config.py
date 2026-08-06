@@ -26,6 +26,18 @@ class Settings(BaseSettings):
     # JWT — must be overridden in production via SECRET_KEY env var
     secret_key: str = "change-me-in-production"
 
+    # ── YouTube download proxy (residential rotating IP) ──────────────────
+    # Full proxy URL for yt-dlp outbound requests, e.g.
+    #   http://user:pass@gateway.provider.com:7777
+    # Leave empty to disable (dev/local falls back to direct connection).
+    #
+    # Sticky sessions: if the URL contains the literal token ``{session}``,
+    # it is replaced with a fresh random id on each download so a single
+    # download keeps one IP (avoids mid-transfer IP switches), while
+    # different downloads rotate to different IPs. Example username:
+    #   user-session-{session}
+    download_proxy_url: str = ""
+
     # Midtrans Integration
     midtrans_server_key: str = ""
     # Explicit environment switch: "sandbox" or "production".

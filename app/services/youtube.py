@@ -3,6 +3,7 @@ import subprocess
 import logging
 import tempfile
 import re
+import uuid
 import yt_dlp
 import time
 
@@ -14,6 +15,37 @@ logger = logging.getLogger(__name__)
 BGUTIL_PROVIDER_URL = os.environ.get(
     "BGUTIL_PROVIDER_URL", "http://bgutil-provider:4416"
 )
+
+# Residential rotating proxy for YouTube downloads. Read from env directly so
+# it works in both the API container and the host-network worker without
+# depending on the pydantic Settings object.
+DOWNLOAD_PROXY_URL = os.environ.get("DOWNLOAD_PROXY_URL", "").strip()
+
+# Sticky-session token in the proxy URL. When present, it's replaced with a
+# fresh random id per download so one download holds a single IP while
+# different downloads rotate.
+_PROXY_SESSION_TOKEN = "{session}"
+
+
+def _mask_proxy(proxy_url: str) -> str:
+    """Redact credentials from a proxy URL for safe logging."""
+    return re.sub(r"//[^@]+@", "//***:***@", proxy_url)
+
+
+def _resolve_proxy_url() -> str | None:
+    """Return the proxy URL to use for this download, or None if disabled.
+
+    If the configured URL contains the ``{session}`` token, substitute a
+    fresh random id so each download gets a sticky-but-unique upstream IP.
+    """
+    if not DOWNLOAD_PROXY_URL:
+        return None
+
+    proxy = DOWNLOAD_PROXY_URL
+    if _PROXY_SESSION_TOKEN in proxy:
+        session_id = uuid.uuid4().hex[:12]
+        proxy = proxy.replace(_PROXY_SESSION_TOKEN, session_id)
+    return proxy
 
 
 # ── Public helpers (signatures unchanged) ──────────────────────────────────
@@ -82,9 +114,12 @@ def _build_ydl_opts(
 ) -> dict:
     """
     Build a yt-dlp options dict with all layers of YouTube bypass:
-      1. Residential proxy  (DOWNLOAD_PROXY_URL)
+      1. Residential rotating proxy  (DOWNLOAD_PROXY_URL, with {session} sticky support)
       2. PO Token via bgutil-provider sidecar
       3. Cookies from cookies.txt
+
+    All three layers are optional and independent: any that are unconfigured
+    are simply skipped, so local/dev runs work with a plain direct connection.
 
     Args:
         output_template: yt-dlp output path template
@@ -133,8 +168,9 @@ def _build_ydl_opts(
         "fragment_retries": 3,
         # Allow yt-dlp to download remote JS solvers for YouTube
         "remote_components": ["ejs:github"],
-        # Force IPv6
-        "force_ipv6": True,
+        # Force IPv6 ONLY when not using a proxy. Residential proxies are
+        # almost always IPv4, and forcing IPv6 would break the proxy tunnel.
+        "force_ipv6": not DOWNLOAD_PROXY_URL,
         # Extractor args: use web client + bgutil PO token provider
         "extractor_args": {
             "youtube": {
@@ -146,7 +182,11 @@ def _build_ydl_opts(
         "progress_hooks": [progress_hook],
     }
 
-
+    # Layer 1: Residential rotating proxy
+    proxy_url = _resolve_proxy_url()
+    if proxy_url:
+        opts["proxy"] = proxy_url
+        logger.info(f"[yt-dlp] Using download proxy: {_mask_proxy(proxy_url)}")
 
     # Layer 3: Cookies
     cookies_path = _find_cookies_file()

@@ -80,6 +80,8 @@ services:
       # networking and can't bind to host IPv6 addresses. Only the worker
       # (network_mode: host) should rotate.
       IPV6_ROTATION_PREFIX: ""
+      # Residential rotating proxy for yt-dlp metadata calls made by the API.
+      DOWNLOAD_PROXY_URL: ${DOWNLOAD_PROXY_URL:-}
     ports:
       - "8000:8000"
     volumes:
@@ -130,6 +132,8 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY}
       # IPv6 source-address rotation prefix (your VPS's /64 block)
       IPV6_ROTATION_PREFIX: ${IPV6_ROTATION_PREFIX:-}
+      # Residential rotating proxy for yt-dlp downloads (the heavy lifting).
+      DOWNLOAD_PROXY_URL: ${DOWNLOAD_PROXY_URL:-}
     volumes:
       - whisper_cache:/app/.cache/huggingface
       - ytdlp_cache:/app/.cache/yt-dlp
